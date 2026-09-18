@@ -1,0 +1,152 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="{{ theme.bg_start }}">
+  <title>{{ settings.title }}</title>
+
+  {% if visit_ended %}
+  {% comment %}
+    Back-button guard, for a browser that has already finished a visit here.
+
+    A visit that has ended must be restarted by scanning the poster, not by
+    pressing Back until this form reappears. The server cannot tell those two
+    apart — a scan and a history move are the same request to the same URL —
+    so the decision has to be made here, where the navigation type is known.
+
+    Run in the head, before anything is painted, so the form is never shown
+    to someone who is about to be turned away. `replace` rather than `href`
+    keeps the closing page from stacking up another history entry to press
+    Back through.
+  {% endcomment %}
+  <script>
+    (function () {
+      "use strict";
+
+      function cameFromHistory() {
+        try {
+          var entries = performance.getEntriesByType("navigation");
+          if (entries && entries.length) return entries[0].type === "back_forward";
+        } catch (err) { /* fall through to the older API */ }
+        // Legacy API, still the only one on some older phone browsers.
+        // 2 is TYPE_BACK_FORWARD.
+        return !!(performance.navigation && performance.navigation.type === 2);
+      }
+
+      function sendToClosingPage() {
+        window.location.replace("{% url 'customer:finished' %}");
+      }
+
+      if (cameFromHistory()) sendToClosingPage();
+
+      // A restored page never re-runs the check above, because it is not
+      // parsed again — this is the only signal that it came back.
+      window.addEventListener("pageshow", function (event) {
+        if (event.persisted) sendToClosingPage();
+      });
+    })();
+  </script>
+  {% endif %}
+
+  {# Same stylesheet as the kiosk and the check page — one look, one source. #}
+  <link rel="stylesheet" href="{% static 'css/kiosk.css' %}?v={{ asset_version }}">
+  <link rel="stylesheet" href="{% static 'css/customer.css' %}?v={{ asset_version }}">
+
+  <style>
+    :root {
+      --bg-start: {{ theme.bg_start }};
+      --bg-end: {{ theme.bg_end }};
+      --accent: {{ theme.accent }};
+      --price: {{ theme.price }};
+      --text: {{ theme.text }};
+      --text-dim: {{ theme.text_dim }};
+      --ok: {{ theme.in_stock }};
+      --bad: {{ theme.out_of_stock }};
+      --card-alpha: {{ theme.card_opacity|default:8 }}%;
+      {% if background_url %}
+      --bg-image: url('{{ background_url }}');
+      --bg-overlay: {{ background_overlay }}%;
+      {% endif %}
+    }
+  </style>
+</head>
+
+<body class="{% if background_url %}has-bg-image{% endif %} is-customer is-signin"
+      data-bg-fit="{{ background_fit|default:'cover' }}">
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+<div class="page">
+
+  <header class="topbar">
+    <div class="topbar-brand">
+      {% if logo_url %}
+        <img class="topbar-logo" src="{{ logo_url }}" alt="{{ navbar_title }}">
+      {% else %}
+        <span class="topbar-monogram" aria-hidden="true">{{ navbar_title|slice:":1"|upper }}</span>
+      {% endif %}
+      <div class="topbar-titles">
+        <span class="topbar-store">{{ navbar_title }}</span>
+        <span class="topbar-meta">{{ navbar_subtitle }}</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+    {% comment %}
+      One centred console rather than the kiosk's two columns: there is no
+      product to show yet, so the sign-in card takes the whole stage.
+    {% endcomment %}
+    <div class="stage stage--single">
+      <section class="stage-left">
+        <section class="console">
+          <span class="console-sheen" aria-hidden="true"></span>
+
+          <header class="console-brand">
+            <h1 class="welcome">{{ settings.title }}</h1>
+            {% if settings.subtitle %}
+              <p class="scan-sub">{{ settings.subtitle }}</p>
+            {% endif %}
+          </header>
+
+          {% if messages %}
+            <ul class="portal-messages">
+              {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+
+          <form method="post" class="portal-form" autocomplete="off" novalidate>
+            {% csrf_token %}
+
+            <label class="portal-field">
+              <span class="portal-label">Your name</span>
+              {{ form.name }}
+              {% for error in form.name.errors %}
+                <p class="portal-error">{{ error }}</p>
+              {% endfor %}
+            </label>
+
+            <label class="portal-field">
+              <span class="portal-label">Mobile number</span>
+              {{ form.mobile_number }}
+              {% for error in form.mobile_number.errors %}
+                <p class="portal-error">{{ error }}</p>
+              {% endfor %}
+            </label>
+
+            <button type="submit" class="btn btn--primary btn--block">Check Prices</button>
+          </form>
+
+          <p class="portal-note">
+            Your name and mobile number are recorded for the shop's records only.
+          </p>
+        </section>
+      </section>
+    </div>
+  </main>
+</div><!-- /.page -->
+
+</body>
+</html>

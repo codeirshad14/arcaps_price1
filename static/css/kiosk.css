@@ -1,0 +1,1922 @@
+/* ==========================================================================
+   Showroom Price Checker — kiosk screen
+   --------------------------------------------------------------------------
+   Every colour comes from a CSS variable that the server (and then the API)
+   sets per station, so the same stylesheet themes every showroom system.
+
+   Layout rule driving this file: the result view fits ONE screen, never
+   scrolls. Every vertical element is bounded — image by vh, text by line
+   clamps — so no combination of enabled fields can push content out of view.
+
+   Sections:
+     1. Theme variables
+     2. Reset and page shell
+     3. Background
+     4. View switching
+     5. Idle state
+     6. Manual entry + buttons
+     7. Voice panel
+     8. Result state (single and multi)
+     9. Not-found state
+    10. Countdown
+    11. Station picker + toast
+    12. Responsive / mobile
+   ========================================================================== */
+
+/* ---------- 0. Typography ------------------------------------------------
+   Two variable fonts, served from static/fonts so the kiosk keeps its
+   typography with the internet down — a webfont CDN would leave the showroom
+   in Arial the moment the link drops.
+
+     Inter  — UI and body. Designed for screens; excellent at small sizes.
+     Outfit — display. Geometric, with wide open figures that read well as a
+              very large price from across a room.
+
+   Both are latin-subset. The Devanagari language chip ("हिंदी" / "मराठी")
+   falls through to Nirmala UI on Windows, which is why it is in the stack. */
+
+@font-face {
+  font-family: "Inter";
+  src: url("../fonts/inter-var.woff2") format("woff2");
+  font-weight: 100 900;                /* variable: one file, every weight */
+  font-style: normal;
+  font-display: swap;                  /* show fallback text immediately */
+}
+
+@font-face {
+  font-family: "Outfit";
+  src: url("../fonts/outfit-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- 1. Theme variables ------------------------------------------ */
+
+:root {
+  /* These eight are overwritten per station, inline in the page head and
+     again by JavaScript when settings change. The values here are only a
+     fallback for a page served without a profile. */
+  --bg-start: #070b16;
+  --bg-end: #1d1442;
+  --accent: #ffc247;
+  --price: #ffc247;
+  --text: #f4f7fd;
+  --text-dim: #aab4c9;
+  --ok: #3ddc97;
+  --bad: #ff7a7a;
+  --card-alpha: 8%;
+
+  /* Derived from the above with colour-mix, so a station only has to choose
+     a handful of colours and the rest stay consistent. */
+  --accent-hi: color-mix(in srgb, var(--accent) 55%, white);
+  --accent-lo: color-mix(in srgb, var(--accent) 70%, black);
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent) 34%, transparent);
+
+  --price-hi: color-mix(in srgb, var(--price) 55%, white);
+  --price-lo: color-mix(in srgb, var(--price) 72%, black);
+
+  --text-faint: color-mix(in srgb, var(--text-dim) 70%, transparent);
+
+  --card-top: color-mix(in srgb, var(--text) var(--card-alpha), transparent);
+  --card-bottom: color-mix(in srgb, var(--text) 2%, transparent);
+  --surface: color-mix(in srgb, var(--text) 6%, transparent);
+  --surface-strong: color-mix(in srgb, var(--text) 11%, transparent);
+  --border: color-mix(in srgb, var(--text) 12%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 22%, transparent);
+
+  --ok-soft: color-mix(in srgb, var(--ok) 16%, transparent);
+  --ok-line: color-mix(in srgb, var(--ok) 36%, transparent);
+  --bad-soft: color-mix(in srgb, var(--bad) 16%, transparent);
+  --bad-line: color-mix(in srgb, var(--bad) 36%, transparent);
+
+  --radius: 26px;
+  --radius-sm: 15px;
+
+  /* "Nirmala UI" covers the Devanagari the latin subsets do not. */
+  --font: "Inter", "Segoe UI", "Nirmala UI", Roboto, system-ui, sans-serif;
+  --font-display: "Outfit", "Inter", "Segoe UI", "Nirmala UI", system-ui, sans-serif;
+
+  --bg-overlay: 45%;
+}
+
+/*
+  color-mix has been in every current browser since 2023, but a kiosk PC can
+  be running something older. These fallbacks are plain translucent whites —
+  correct on a dark theme, which is the default.
+*/
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --accent-hi: var(--accent);
+    --accent-lo: var(--accent);
+    --accent-soft: rgba(255, 255, 255, 0.14);
+    --accent-line: rgba(255, 255, 255, 0.34);
+    --accent-glow: rgba(255, 255, 255, 0.22);
+    --price-hi: var(--price);
+    --price-lo: var(--price);
+    --text-faint: var(--text-dim);
+    --card-top: rgba(255, 255, 255, 0.10);
+    --card-bottom: rgba(255, 255, 255, 0.03);
+    --surface: rgba(255, 255, 255, 0.06);
+    --surface-strong: rgba(255, 255, 255, 0.11);
+    --border: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.22);
+    --ok-soft: rgba(61, 220, 151, 0.16);
+    --ok-line: rgba(61, 220, 151, 0.36);
+    --bad-soft: rgba(255, 122, 122, 0.16);
+    --bad-line: rgba(255, 122, 122, 0.36);
+  }
+}
+
+/* ---------- 2. Reset and page shell -------------------------------------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg-start);
+  overflow: hidden;                 /* kiosk: the page never scrolls */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Optical refinements that matter at very large display sizes. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";   /* Inter: friendlier 1, a, l */
+}
+
+/*
+  Keyboard focus must stay visible for staff using the admin-facing controls,
+  but the scanner sink is focused constantly and would draw a permanent ring.
+  :focus-visible shows the ring only for genuine keyboard navigation.
+*/
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+img { max-width: 100%; display: block; }
+
+/*
+  IMPORTANT: [hidden] works only because the UA stylesheet says display:none,
+  and any class rule that sets display (.btn, .voice-panel, img...) outranks
+  it. Without this line, elements the JavaScript "hides" stay on screen. Keep
+  it above the component rules.
+*/
+[hidden] { display: none !important; }
+
+/* Page shell: a fixed-height top bar with the stage filling what is left. */
+.page {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  /* env() keeps content clear of a phone's notch and home indicator. */
+  padding: clamp(10px, 1.6vh, 24px)
+           max(clamp(12px, 2vw, 32px), env(safe-area-inset-right))
+           max(clamp(12px, 2.2vh, 28px), env(safe-area-inset-bottom))
+           max(clamp(12px, 2vw, 32px), env(safe-area-inset-left));
+}
+
+/* ---------- Top bar ------------------------------------------------------ */
+
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  /* Deliberately generous: this bar carries the company identity and is read
+     from across the showroom, not just by whoever is at the keyboard. */
+  padding: clamp(12px, 1.8vh, 20px)
+           max(clamp(14px, 2.2vw, 32px), env(safe-area-inset-right))
+           clamp(12px, 1.8vh, 20px)
+           max(clamp(14px, 2.2vw, 32px), env(safe-area-inset-left));
+  padding-top: max(clamp(12px, 1.8vh, 20px), env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: clamp(9px, 1vw, 14px);
+  min-width: 0;
+}
+
+.topbar-logo {
+  height: clamp(52px, 8.5vh, 96px);
+  width: auto;
+  max-width: clamp(180px, 26vw, 360px);
+  object-fit: contain;
+  flex: none;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.35));
+}
+
+/* Shown when no logo has been uploaded, so the bar never looks unfinished. */
+.topbar-monogram {
+  display: grid;
+  place-items: center;
+  width: clamp(52px, 8.5vh, 84px);
+  height: clamp(52px, 8.5vh, 84px);
+  border-radius: 16px;
+  flex: none;
+  background: linear-gradient(160deg, var(--accent-hi), var(--accent-lo));
+  color: #241701;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(24px, 4vh, 40px);
+  line-height: 1;
+  box-shadow: 0 6px 18px var(--accent-glow);
+}
+
+.topbar-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.topbar-store {
+  font-family: var(--font-display);
+  font-size: clamp(17px, 1.9vw, 26px);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-meta {
+  font-size: clamp(11px, 0.95vw, 14px);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+  The role word ("Counter" / "Customer") is the part that says which screen
+  you are looking at, so it leads the line and is the brighter of the two.
+*/
+.topbar-role { color: var(--text-dim); }
+
+/*
+  Separator before the station name, drawn by CSS rather than baked into the
+  text: `:empty` matches while JavaScript has not filled the station in (or
+  has cleared it), so an absent station never leaves a stray dot behind.
+*/
+#station-label:not(:empty)::before { content: "· "; }
+
+/* Who is signed in — useful when several staff share one PC. */
+.topbar-user { color: var(--accent); opacity: 0.8; }
+
+/* ---------- 3. Background ------------------------------------------------ */
+
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  /* Always painted, so an uploaded image that fails to load degrades to
+     something deliberate rather than to flat black. */
+  background:
+    radial-gradient(1200px 760px at 10% -12%, var(--accent-glow), transparent 62%),
+    radial-gradient(1000px 680px at 112% 108%,
+      color-mix(in srgb, var(--bg-end) 70%, white 6%), transparent 62%),
+    linear-gradient(150deg, var(--bg-start) 0%,
+      color-mix(in srgb, var(--bg-start) 50%, var(--bg-end)) 52%, var(--bg-end) 100%);
+}
+
+body.has-bg-image .bg-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: var(--bg-image);
+  background-repeat: no-repeat;
+  background-position: center center;
+  /* Default; overridden by the data-bg-fit rules below. */
+  background-size: cover;
+}
+
+/* Background fit modes, chosen per station in the admin. "Contain" is the
+   fix when a tall logo-style image is being cropped by "cover". */
+body[data-bg-fit="cover"]   .bg-layer::after { background-size: cover; }
+body[data-bg-fit="contain"] .bg-layer::after { background-size: contain; }
+body[data-bg-fit="stretch"] .bg-layer::after { background-size: 100% 100%; }
+body[data-bg-fit="center"]  .bg-layer::after { background-size: auto; }
+body[data-bg-fit="tile"]    .bg-layer::after {
+  background-size: auto;
+  background-repeat: repeat;
+}
+
+/* Darkening tint so white text stays readable over a busy photo. */
+body.has-bg-image .bg-layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--bg-start) 72%, transparent),
+      color-mix(in srgb, var(--bg-start) 30%, transparent) 45%,
+      color-mix(in srgb, var(--bg-start) 80%, transparent)),
+    color-mix(in srgb, var(--bg-start) var(--bg-overlay), transparent);
+}
+
+/* ---------- 4. Split stage and view switching ---------------------------- */
+
+/*
+  Two columns on one page. The left console never changes, so staff can scan
+  continuously; only the right column swaps between placeholder, product and
+  not-found.
+*/
+.stage {
+  display: grid;
+  grid-template-columns: minmax(300px, 30%) minmax(0, 1fr);
+  gap: clamp(14px, 2vw, 30px);
+  width: 100%;
+  max-width: 1720px;
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+}
+
+.stage-left,
+.stage-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(8px, 1.4vh, 18px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage-right { position: relative; }
+
+/*
+  The detail panel scrolls when — and only when — its content genuinely does
+  not fit.
+
+  `safe center` is what makes that a single rule instead of a pile of
+  breakpoints: it centres the card while there is room, and falls back to
+  start-alignment the moment the content is taller than the panel. Plain
+  `center` overflows in BOTH directions, pushing the top of the card above
+  the panel's top edge where no amount of scrolling can reach it.
+
+  The desktop kiosk still never scrolls in practice, because on a desktop the
+  card fits. But when it does not — three price lists on a short window — a
+  scrollbar is far better than the silent clipping that used to happen.
+*/
+.stage-right {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  justify-content: safe center;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.stage-right::-webkit-scrollbar { width: 6px; }
+.stage-right::-webkit-scrollbar-track { background: transparent; }
+.stage-right::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* Each detail view fills the right column; only one is active at a time. */
+.detail-view {
+  display: none;
+  width: 100%;
+  min-height: 0;
+}
+
+.detail-view.is-active {
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+  gap: clamp(10px, 1.8vh, 22px);
+  animation: view-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* --- Right column, waiting for a scan ------------------------------------ */
+
+.detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(8px, 1.4vh, 16px);
+  padding: clamp(24px, 5vh, 60px);
+  border-radius: var(--radius);
+  /* Dashed and unfilled: clearly a place waiting for content, not a card. */
+  border: 1px dashed var(--border-strong);
+  background: color-mix(in srgb, var(--text) 2%, transparent);
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.detail-empty-art { color: var(--accent); opacity: 0.35; }
+
+.detail-empty-art svg {
+  width: clamp(56px, 8vw, 92px);
+  height: auto;
+  animation: empty-breathe 3.4s ease-in-out infinite;
+}
+
+@keyframes empty-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(0.98); }
+  50%      { opacity: 1;    transform: scale(1); }
+}
+
+.detail-empty-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(19px, 2.2vw, 32px);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.detail-empty-sub {
+  margin: 0;
+  font-size: clamp(12px, 1.1vw, 16px);
+  color: var(--text-faint);
+}
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- 5. Idle state ------------------------------------------------ */
+
+.store-logo {
+  max-height: clamp(40px, 7vh, 80px);
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.45));
+}
+
+.welcome {
+  margin: 0;
+  font-family: var(--font-display);
+  /* Sized for the left column, not the full screen — the price on the right
+     is what should dominate. */
+  font-size: clamp(20px, 2.1vw, 32px);
+  font-weight: 700;
+  /* Large display type needs negative tracking to avoid looking loose. */
+  letter-spacing: -0.024em;
+  line-height: 1.1;
+  color: var(--text);
+  text-wrap: balance;               /* even line lengths when it wraps */
+  text-align: center;
+}
+
+/* --- The console ----------------------------------------------------------
+   One surface holding everything, rather than several floating boxes. The
+   hierarchy inside it is deliberate: brand, then the scan window (the thing
+   people actually use), then manual entry, then voice. */
+
+.console {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(10px, 1.6vh, 20px);
+  width: 100%;
+  padding: clamp(16px, 2.4vh, 30px) clamp(16px, 1.8vw, 30px);
+  border-radius: var(--radius);
+  background: linear-gradient(155deg, var(--card-top), var(--card-bottom));
+  border: 1px solid var(--border);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.40),
+              inset 0 1px 0 color-mix(in srgb, var(--text) 13%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  animation: chip-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Accent hairline along the top edge. */
+.console::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16%;
+  right: 16%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-line), transparent);
+}
+
+/* Slow diagonal highlight travelling across the glass. */
+.console-sheen {
+  position: absolute;
+  top: -60%;
+  left: -60%;
+  width: 45%;
+  height: 220%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent,
+              color-mix(in srgb, var(--text) 6%, transparent), transparent);
+  transform: rotate(18deg);
+  animation: sheen 8s ease-in-out infinite;
+}
+
+@keyframes sheen {
+  0%        { left: -60%; opacity: 0; }
+  22%       { opacity: 1; }
+  62%, 100% { left: 130%; opacity: 0; }
+}
+
+.console-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(6px, 1vh, 12px);
+}
+
+/* --- The scan window ------------------------------------------------------
+   Recessed rather than raised: a sunken surface with corner brackets reads as
+   somewhere you present something to. A flat card does not. */
+
+.scan-stage {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(6px, 1vh, 12px);
+  padding: clamp(14px, 2.4vh, 28px) clamp(16px, 3vw, 40px);
+  border-radius: calc(var(--radius) - 8px);
+  /* Darker than the console, with an inner shadow, so it sits *into* it. */
+  background: linear-gradient(180deg,
+              rgba(0, 0, 0, 0.26), rgba(0, 0, 0, 0.12));
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  box-shadow: inset 0 3px 14px rgba(0, 0, 0, 0.34);
+}
+
+/* Corner brackets — the visual language of a viewfinder. */
+.stage-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--accent-line);
+  pointer-events: none;
+}
+
+.stage-corner--tl { top: 10px; left: 10px; border-right: 0; border-bottom: 0; border-radius: 5px 0 0 0; }
+.stage-corner--tr { top: 10px; right: 10px; border-left: 0; border-bottom: 0; border-radius: 0 5px 0 0; }
+.stage-corner--bl { bottom: 10px; left: 10px; border-right: 0; border-top: 0; border-radius: 0 0 0 5px; }
+.stage-corner--br { bottom: 10px; right: 10px; border-left: 0; border-top: 0; border-radius: 0 0 5px 0; }
+
+.scan-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(17px, 2vw, 28px);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text);
+  /* One line, always. Wrapping "…or QR / code" reads as a broken layout, and
+     the sizes below are chosen so it fits without ever needing to. */
+  white-space: nowrap;
+}
+
+.scan-sub {
+  margin: 0;
+  font-size: clamp(11px, 1vw, 14px);
+  color: var(--text-faint);
+}
+
+/* --- Divider between primary and secondary actions ----------------------- */
+
+.console-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.console-divider::before,
+.console-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+}
+
+.scan-card-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 300px;
+  height: clamp(66px, 11vh, 112px);
+  color: var(--accent);
+}
+
+/* Barcode bars, each breathing on its own delay. */
+.barcode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(3px, 0.55vw, 6px);
+  height: 100%;
+  width: 100%;
+  padding: 0 12%;
+}
+
+.barcode i {
+  display: block;
+  flex: 1;
+  min-width: 2px;
+  max-width: 7px;
+  height: var(--h, 70%);
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+  opacity: 0.85;
+  animation: bar-breathe 2.8s ease-in-out infinite;
+}
+
+/* Stagger the bars using their position, so no per-bar CSS is needed. */
+.barcode i:nth-child(3n)   { animation-delay: 0.35s; }
+.barcode i:nth-child(3n+1) { animation-delay: 0.7s; }
+.barcode i:nth-child(4n)   { animation-delay: 1.05s; }
+
+@keyframes bar-breathe {
+  0%, 100% { opacity: 0.55; transform: scaleY(0.94); }
+  50%      { opacity: 1;    transform: scaleY(1); }
+}
+
+/* The sweeping scan beam. */
+.scan-beam {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-hi), transparent);
+  box-shadow: 0 0 14px 2px var(--accent-glow);
+  animation: beam-sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes beam-sweep {
+  0%        { top: 8%;  opacity: 0; }
+  12%       { opacity: 1; }
+  50%       { top: 88%; opacity: 1; }
+  62%       { opacity: 1; }
+  88%, 100% { top: 8%;  opacity: 0; }
+}
+
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Used on the login page footer; the kiosk shows this in the top bar. */
+.station-label {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* The logout form must not add layout of its own inside the control strip. */
+.logout-form { display: contents; }
+
+/* ---------- 6. Manual entry + buttons ----------------------------------- */
+
+/* The left column is narrow, so the field stacks above its button. */
+.manual-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.manual-form .btn { width: 100%; }
+
+/* The icon sits inside the field, so the input reads as "a barcode goes
+   here" without needing a separate label. */
+.input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 16px;
+  width: 20px;
+  height: 20px;
+  color: var(--text-faint);
+  pointer-events: none;
+  transition: color 160ms;
+}
+
+.input-wrap:focus-within .input-icon { color: var(--accent); }
+
+.manual-input {
+  width: 100%;
+  min-width: 0;
+  padding: 15px 18px 15px 46px;     /* room for the icon */
+  /* 16px minimum stops iOS Safari zooming the page on focus. */
+  font-size: clamp(16px, 1.4vw, 19px);
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 160ms, box-shadow 160ms, background 160ms;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.manual-input::placeholder { color: var(--text-faint); letter-spacing: 0; }
+
+.manual-input:focus {
+  border-color: var(--accent);
+  background: rgba(0, 0, 0, 0.30);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* --- Voice row ----------------------------------------------------------- */
+
+.voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.voice-hint {
+  font-size: clamp(11px, 1vw, 13px);
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 15px 26px;
+  font-family: inherit;
+  font-size: clamp(15px, 1.2vw, 18px);
+  font-weight: 650;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 48px;                 /* comfortable touch target */
+  transition: transform 120ms, filter 160ms, background 160ms, border-color 160ms;
+}
+
+.btn:active { transform: translateY(1px); }
+.btn svg { width: 20px; height: 20px; flex: none; }
+
+.btn--primary {
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent) 45%, var(--accent-lo));
+  color: #241701;
+  box-shadow: 0 8px 24px var(--accent-glow);
+}
+
+.btn--primary:hover { filter: brightness(1.07); }
+
+.btn--ghost {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.btn--ghost:hover { background: var(--surface-strong); }
+
+.btn--danger {
+  background: var(--bad-soft);
+  border-color: var(--bad-line);
+  color: var(--bad);
+}
+
+.btn--small { padding: 10px 16px; font-size: 14px; min-height: 40px; }
+
+.btn.is-listening {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hi);
+}
+
+.voice-panel { width: 100%; }
+
+/* Now part of the top bar rather than floating over the page. */
+.corner-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  opacity: 0.55;
+  transition: opacity 200ms;
+}
+
+.corner-controls:hover,
+.corner-controls:focus-within { opacity: 1; }
+
+.icon-button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 12px;
+  padding: 10px;
+  cursor: pointer;
+  transition: background 160ms, color 160ms;
+}
+
+.icon-button:hover { background: var(--surface-strong); color: var(--text); }
+.icon-button svg { width: 20px; height: 20px; display: block; }
+
+/* Muted speaker reads as "something is switched off", not just another icon. */
+.icon-button.is-muted {
+  color: var(--bad);
+  border-color: var(--bad-line);
+  background: var(--bad-soft);
+}
+
+/* ---------- 7. Voice panel ---------------------------------------------- */
+
+.voice-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 15px;
+  color: var(--text-dim);
+  max-width: min(700px, 94vw);
+}
+
+.voice-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  box-shadow: 0 0 10px var(--accent-glow);
+  animation: blink 1.1s ease-in-out infinite;
+}
+
+.voice-panel.is-armed .voice-dot { background: var(--ok); animation-duration: 2.2s; }
+
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+.voice-lang {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-hi);
+  border: 1px solid var(--accent-line);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.voice-status { flex: none; }
+
+.voice-transcript {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 160ms, opacity 160ms;
+}
+
+/* An interim guess is not a decision yet — show it, but do not let it look
+   as settled as a confirmed result. */
+.voice-transcript.is-interim {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* ---------- 8. Result state --------------------------------------------- */
+
+/*
+  Holds one card, or several side by side when comparing.
+
+  `flex-shrink: 0` is load-bearing, and was the mobile "cannot see both
+  prices" bug: as a flex item in .detail-view this was free to be squashed
+  shorter than the card inside it. The card stretched to that squashed
+  height, and its own `overflow: hidden` then ate the difference — the
+  wholesale tier was simply gone, and because nothing reported as overflowing,
+  the panel had nothing to scroll to either. Refusing to shrink means the card
+  keeps its real height and the panel above can scroll it into view.
+
+  The image is bounded in vh regardless (see .product-image), so nothing here
+  relies on this box being compressible to stay on screen.
+*/
+.result-stage {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(10px, 1.4vw, 20px);
+  min-height: 0;
+  flex-shrink: 0;
+  align-items: stretch;
+}
+
+.result-stage[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.result-stage[data-count="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.result-stage[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.result-stage[data-count="5"],
+.result-stage[data-count="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.result-stage[data-count="7"],
+.result-stage[data-count="8"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/*
+  `min-height: 0` on the card and media cell is what lets the image shrink
+  instead of overflowing the viewport — without it a grid item refuses to go
+  below its content size.
+*/
+.result-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1fr);
+  gap: clamp(18px, 3.2vw, 52px);
+  align-items: center;
+  justify-items: center;
+  min-height: 0;
+  padding: clamp(16px, 2.4vw, 38px);
+  background: linear-gradient(155deg, var(--card-top), var(--card-bottom));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.42),
+              inset 0 1px 0 color-mix(in srgb, var(--text) 14%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  position: relative;
+  overflow: hidden;
+  animation: view-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.result-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-line), transparent);
+}
+
+/* Two or more cards stack their own contents vertically — side-by-side
+   columns inside a half-width card would be unreadable. */
+.result-stage:not([data-count="1"]) .result-card {
+  grid-template-columns: minmax(0, 1fr);
+  text-align: center;
+}
+
+.result-stage:not([data-count="1"]) .result-details {
+  align-items: center;
+  text-align: center;
+}
+
+.result-stage:not([data-count="1"]) .price-meta { justify-content: center; }
+
+/* Collapse to a single centred column when there is no image to show. */
+.result-card.no-media { grid-template-columns: minmax(0, 1fr); }
+.result-card.no-media .result-media { display: none; }
+.result-card.no-media .result-details { text-align: center; align-items: center; }
+.result-card.no-media .price-meta { justify-content: center; }
+
+.result-media {
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+
+.product-image {
+  width: auto;
+  max-width: 100%;
+  /* Bounded by viewport height so a tall image can never force a scroll. */
+  max-height: min(56vh, 500px);
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.45));
+}
+
+.result-stage:not([data-count="1"]) .product-image { max-height: min(30vh, 260px); }
+
+.image-placeholder {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: min(46vh, 400px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-faint);
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+}
+
+.result-stage:not([data-count="1"]) .image-placeholder { max-height: min(24vh, 200px); }
+.image-placeholder svg { width: 56px; height: 56px; opacity: 0.55; }
+
+.result-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: clamp(6px, 1.3vh, 18px);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Which company owns this product. Shown only when it disambiguates. */
+.product-company {
+  align-self: flex-start;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-hi);
+  font-size: clamp(10px, 0.95vw, 13px);
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.result-card.no-media .product-company,
+.result-stage:not([data-count="1"]) .product-company { align-self: center; }
+
+/* Two lines maximum: a long product name must not push the price off screen. */
+/*
+  The wholesale rate, below the product description.
+
+  It is a trade figure, not the headline a walk-in customer reads, so it sits
+  outside the price area entirely as one quiet line near the foot of the card.
+  That leaves the retail price alone in `.price-tiers`, where the
+  `:only-child` rules further down give it the full hero size automatically —
+  no second price box competing with it for the eye.
+
+  Styled here rather than next to the description because it is a price: it
+  shares the tier label's type treatment, not the body text's.
+*/
+.wholesale-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.wholesale-label {
+  font-size: clamp(10px, 0.9vw, 13px);
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.wholesale-amount {
+  font-size: clamp(14px, 1.5vw, 22px);
+  font-weight: 800;
+  color: var(--text-dim);
+}
+
+.product-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.9vw, 46px);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.022em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.result-stage:not([data-count="1"]) .product-name { font-size: clamp(16px, 1.5vw, 24px); }
+
+.price-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+/*
+  The single most important element on the screen.
+
+  Appearance only — the SIZE is decided further down, by the tier this sits
+  in. Every price is inside a `.price-tier`, so a viewport-based size here
+  would only ever fight the fit formula, which is exactly what it used to do:
+  a `.result-stage:not([data-count="1"]) .product-price` rule outranked
+  `.price-tier .product-price` on specificity and quietly reinstated the
+  clipping on any multi-product screen.
+*/
+.product-price {
+  font-weight: 850;
+  line-height: 1;
+  letter-spacing: -0.032em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(170deg, var(--price-hi) 4%, var(--price) 42%, var(--price-lo) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 6px 26px var(--accent-glow));
+}
+
+/* Older engines without background-clip:text would render invisible text. */
+@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
+  .product-price { color: var(--price); background: none; }
+}
+
+.price-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.product-mrp {
+  font-size: clamp(16px, 1.9vw, 30px);
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.discount-badge {
+  padding: 6px 15px;
+  border-radius: 999px;
+  background: var(--ok-soft);
+  color: var(--ok);
+  border: 1px solid var(--ok-line);
+  font-size: clamp(13px, 1.35vw, 20px);
+  font-weight: 750;
+}
+
+/*
+  Price tiers — one mini price-block per price list (Retail, Wholesale, ...).
+  `flex-wrap` is what stacks them on a phone and sits them side by side on a
+  tablet/showroom screen, with no separate breakpoint needed: each tier has a
+  200px minimum, so anything narrower than ~420px wraps to one per row.
+*/
+.price-tiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(10px, 1.6vw, 22px);
+  width: 100%;
+}
+
+.price-tier {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: clamp(10px, 1.4vw, 18px) clamp(12px, 1.8vw, 22px);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  /* Sizing budget for the amount inside — see "How big the amount is
+     drawn" below. Each context that needs a different ceiling only has to
+     change the cap, never the formula. */
+  --price-cap: 46px;
+  --price-floor: 18px;
+}
+
+/* The default list (usually Retail) reads as the primary tier. */
+.price-tier.is-default-tier {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.tier-label {
+  font-size: clamp(11px, 1vw, 14px);
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Wrapping, not nowrap: two tiers side by side leave the MRP and the
+   discount badge sharing a far narrower line than a full-width card did. */
+.price-tier .price-meta { gap: 8px; flex-wrap: wrap; }
+.price-tier .product-mrp { font-size: clamp(12px, 1.3vw, 18px); }
+.price-tier .discount-badge { font-size: clamp(10px, 1vw, 14px); padding: 3px 10px; }
+
+/* Only one price list configured: no wholesale, so let the single tier take
+   the full hero size the old single-price layout used, rather than looking
+   stranded at a narrow width with an empty label above it. */
+.price-tiers:has(.price-tier:only-child) {
+  display: block;
+}
+.price-tiers:has(.price-tier:only-child) .price-tier {
+  border: none;
+  background: none;
+  padding: 0;
+}
+.price-tiers:has(.price-tier:only-child) .tier-label {
+  display: none;
+}
+
+/*
+  How big the amount is drawn.
+  ---------------------------------------------------------------------------
+  The bug this replaces: the size came from the viewport (`4.2vw`), which
+  knows nothing about how wide the tier it lands in actually is. On a 1080p
+  screen showing Retail and Wholesale side by side, "₹558.98" at 56px was
+  wider than its ~300px tier and the card's `overflow: hidden` sliced the
+  last digit off.
+
+  Two numbers decide it now:
+
+    --price-cap  the largest it is ever drawn in this context — a hero price
+                 on a lone card, something much smaller when six cards share
+                 the screen. Set per context below; the formula never moves.
+    --price-em   how wide THIS amount is, in em, in the real font. CSS cannot
+                 know that, so kiosk.js measures it once per amount and sets
+                 it on the element (see fitPrices there).
+
+  Dividing the tier's own inline size by the second and capping with the
+  first means the whole amount fits — any currency, any digit count, any
+  screen — instead of being clipped.
+*/
+.price-tiers:has(.price-tier:only-child) .price-tier { --price-cap: 96px; }
+
+/* Several products on screen at once: a lower ceiling, so six prices across
+   one screen stay in proportion to each other and to the names above them.
+   It is only a ceiling — a narrow tier still takes whatever it can hold. */
+.result-stage:not([data-count="1"]) .price-tier { --price-cap: 40px; }
+.result-stage:not([data-count="1"]) .price-tiers:has(.price-tier:only-child) .price-tier {
+  --price-cap: 52px;
+}
+
+/* Fallback for engines without container queries. It cannot measure the
+   tier, so it stays deliberately conservative. */
+.price-tier .product-price {
+  font-size: clamp(22px, 4vw, var(--price-cap));
+  filter: none;
+}
+
+@supports (container-type: inline-size) {
+  /* Each tier answers `cqi` for the price inside it. This also stops a long
+     amount from stretching the tier, since a size container's width is
+     resolved without consulting its contents. */
+  .price-tier { container-type: inline-size; }
+
+  .price-tier .product-price {
+    font-size: clamp(
+      var(--price-floor),
+      calc(100cqi / var(--price-em, 5.2)),
+      var(--price-cap)
+    );
+  }
+}
+
+/* Three lines maximum, for the same reason as the name. */
+.product-description {
+  margin: 0;
+  font-size: clamp(13px, 1.2vw, 19px);
+  line-height: 1.5;
+  color: var(--text-dim);
+  max-width: 60ch;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.result-stage:not([data-count="1"]) .product-description { -webkit-line-clamp: 2; }
+
+.availability {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: clamp(13px, 1.3vw, 20px);
+  font-weight: 700;
+}
+
+.availability::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.availability.in-stock {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border: 1px solid var(--ok-line);
+}
+
+.availability.out-of-stock {
+  background: var(--bad-soft);
+  color: var(--bad);
+  border: 1px solid var(--bad-line);
+}
+
+.result-code {
+  font-size: 13px;
+  color: var(--text-faint);
+  letter-spacing: 0.09em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 9. Not-found state ------------------------------------------ */
+
+.notfound-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: clamp(24px, 4.5vw, 58px);
+  background: linear-gradient(155deg, var(--card-top), var(--card-bottom));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  min-height: 0;
+}
+
+.notfound-icon { color: var(--bad); }
+.notfound-icon svg { width: clamp(48px, 6.4vw, 82px); height: auto; }
+
+.notfound-title { margin: 0; font-size: clamp(24px, 3.4vw, 50px); font-weight: 780; }
+.notfound-sub { margin: 0; font-size: clamp(15px, 1.5vw, 23px); color: var(--text-dim); }
+
+.notfound-code {
+  margin-top: 6px;
+  padding: 11px 20px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.30);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: clamp(14px, 1.25vw, 18px);
+  overflow-wrap: anywhere;
+}
+
+.notfound-code strong {
+  color: var(--text);
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 10. Countdown ----------------------------------------------- */
+
+.countdown { width: 100%; flex: none; }
+
+.countdown-bar {
+  height: 4px;
+  width: 100%;
+  background: var(--surface-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.countdown-bar span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--accent-lo), var(--accent-hi));
+  border-radius: 999px;
+  transform-origin: left center;
+}
+
+/* Duration 0: the product is held until the next scan. A quiet, static bar
+   says "parked" rather than "counting down". */
+.countdown-bar span.is-held {
+  background: var(--border-strong);
+  opacity: 0.6;
+}
+
+.countdown-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.countdown-text,
+.countdown-hint {
+  font-size: 14px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.countdown-hint { color: var(--accent); }
+
+/* ---------- 10b. Login --------------------------------------------------- */
+
+.login-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+}
+
+.login-console {
+  width: min(430px, 100%);
+  /* The form is the whole page here, so it may select and scroll normally. */
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+
+.login-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+}
+
+.login-label {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Django renders these inputs, so they are styled by element rather than by
+   a class we control. */
+.login-field input[type="text"],
+.login-field input[type="password"] {
+  width: 100%;
+  padding: 14px 16px;
+  font-family: inherit;
+  font-size: 16px;                  /* 16px stops iOS zooming on focus */
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 160ms, box-shadow 160ms, background 160ms;
+}
+
+.login-field input::placeholder { color: var(--text-faint); }
+
+.login-field input:focus {
+  border-color: var(--accent);
+  background: rgba(0, 0, 0, 0.30);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.login-remember {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+}
+
+.login-remember input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  flex: none;
+  cursor: pointer;
+}
+
+.login-remember strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.login-remember em {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+.login-submit { width: 100%; }
+
+.login-error {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bad-soft);
+  border: 1px solid var(--bad-line);
+  color: var(--bad);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.login-field-error { font-size: 12px; color: var(--bad); }
+
+/* ---------- 11. Station picker + toast ----------------------------------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(3, 6, 14, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: view-in 180ms ease-out;
+}
+
+.modal-card {
+  width: min(540px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: clamp(20px, 3vw, 32px);
+  border-radius: var(--radius);
+  background: linear-gradient(155deg,
+    color-mix(in srgb, var(--bg-end) 92%, white 8%),
+    color-mix(in srgb, var(--bg-start) 94%, white 3%));
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+}
+
+.modal-title { margin: 0; font-size: clamp(19px, 2vw, 25px); font-weight: 760; }
+.modal-sub { margin: 0; font-size: 14px; color: var(--text-dim); line-height: 1.5; }
+
+.station-list { display: flex; flex-direction: column; gap: 8px; }
+
+.station-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 13px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms, background 160ms;
+}
+
+.station-option:hover { background: var(--surface-strong); }
+
+.station-option.is-current { border-color: var(--accent); background: var(--accent-soft); }
+
+.station-option strong { font-size: 16px; font-weight: 700; }
+
+.station-option span { font-size: 13px; color: var(--text-dim); }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 12;
+  padding: 13px 24px;
+  border-radius: 999px;
+  background: rgba(12, 17, 30, 0.96);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: view-in 200ms ease-out;
+  max-width: 92vw;
+  text-align: center;
+}
+
+.toast.is-error { border-color: var(--bad-line); color: var(--bad); }
+
+/* ---------- 12. Responsive / mobile -------------------------------------- */
+
+/* Narrow or portrait: the two columns become two rows, console on top so the
+   input is still reachable without scrolling. */
+@media (max-width: 1000px), (orientation: portrait) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: clamp(10px, 1.6vh, 18px);
+  }
+  .manual-form { flex-direction: row; }
+  .manual-form .btn { width: auto; }
+  .detail-empty { padding: clamp(16px, 3vh, 32px); }
+  .detail-empty-art svg { width: 48px; }
+
+  /* The console is a row now, so it does not need the full column height. */
+  .stage-left { justify-content: flex-start; }
+  .console { gap: 10px; }
+
+  /*
+    A phone is where the panel actually has to scroll: a photo, two or three
+    price tiers, a description, a stock badge and the countdown do not share
+    one portrait screen. The scrolling itself is set up once for every size
+    (see .stage-right in section 4) — all that is needed here is a little
+    room so the last line clears the bottom edge under the thumb.
+  */
+  .stage-right { padding-bottom: 6px; }
+
+  /*
+    While a product is on screen there is not room for both. Collapse the
+    console to just its input so the price gets the space — scanning still
+    works, because the scanner writes into an offscreen field that is always
+    listening regardless of what is visible.
+  */
+  body.is-showing-result .console-brand,
+  body.is-showing-result .scan-stage,
+  body.is-showing-result .console-divider,
+  body.is-showing-result .voice-row,
+  body.is-showing-result .voice-panel { display: none; }
+
+  body.is-showing-result .console {
+    padding: 10px 12px;
+    background: none;
+    border-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    animation: none;
+  }
+
+  body.is-showing-result .console-sheen { display: none; }
+}
+
+/* Very narrow phones: the smallest layout that still reads across a counter. */
+@media (max-width: 380px) {
+  .topbar-store { display: none; }
+  .scan-title { font-size: 3.9vw; }
+  .price-meta { flex-wrap: wrap; }
+  .product-image { max-height: 18vh; }
+}
+
+/* Portrait tablets and phones: stack the card, shrink the image hard so the
+   price and name still share one screen. */
+@media (max-width: 900px), (orientation: portrait) {
+  .result-card {
+    grid-template-columns: minmax(0, 1fr);
+    text-align: center;
+  }
+  .result-details { align-items: center; text-align: center; }
+  .price-meta { justify-content: center; }
+  .product-image { max-height: 28vh; }
+  .image-placeholder { max-height: 24vh; aspect-ratio: 4 / 3; }
+  .product-description { -webkit-line-clamp: 2; }
+
+  /* Never more than two cards abreast on a narrow screen. */
+  .result-stage[data-count="3"],
+  .result-stage[data-count="4"],
+  .result-stage[data-count="5"],
+  .result-stage[data-count="6"],
+  .result-stage[data-count="7"],
+  .result-stage[data-count="8"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Phones: stack the input above its button and let the console fill the
+   screen — side-by-side fields get too cramped to tap accurately. */
+@media (max-width: 560px) {
+  /* Keep the logo prominent, drop the secondary line — the bar stays one row. */
+  .topbar { padding: 10px 12px; gap: 10px; }
+  .topbar-meta { display: none; }
+  .topbar-store { font-size: 16px; }
+  .topbar-logo { height: 46px; max-width: 150px; }
+  .topbar-monogram { width: 46px; height: 46px; font-size: 22px; }
+
+  /* Phone + result showing: shrink the bar too, every pixel goes to the price. */
+  body.is-showing-result .topbar { padding: 6px 12px; }
+  body.is-showing-result .topbar-logo { height: 34px; max-width: 110px; }
+  body.is-showing-result .topbar-monogram { width: 34px; height: 34px; font-size: 17px; }
+  body.is-showing-result .topbar-store { font-size: 14px; }
+
+  .console { padding: 14px; gap: 10px; }
+  .manual-form { flex-direction: column; }
+  .manual-form .btn { width: 100%; }
+  .voice-row { width: 100%; flex-direction: column; }
+  .voice-row .btn { width: 100%; }
+  .scan-stage { padding: 12px 10px; }
+  .stage-corner { display: none; }
+  .scan-card-art { height: 54px; }
+  .detail-empty-art { display: none; }
+
+  /* Scale with the viewport rather than sitting at a fixed minimum, so the
+     prompt stays on one line down to the narrowest phones. */
+  .scan-title { font-size: clamp(13px, 4.1vw, 19px); }
+  .scan-sub { font-size: clamp(10px, 2.9vw, 12px); }
+
+  .result-stage,
+  .result-stage[data-count="2"],
+  .result-stage[data-count="3"],
+  .result-stage[data-count="4"] { grid-template-columns: minmax(0, 1fr); }
+
+  /*
+    Phone product card. Scrolling and top-alignment come from the wider
+    portrait block above; what is left here is purely how the card is
+    proportioned once it has somewhere to scroll.
+  */
+  .result-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: min-content;      /* rows size to content, never stretch */
+    align-items: start;
+    align-content: start;
+    justify-items: stretch;
+    gap: 10px;
+    padding: 12px 12px 14px;
+  }
+
+  .result-details {
+    align-items: center;
+    text-align: center;
+    gap: 7px;
+    width: 100%;
+  }
+
+  /* Full width, so the mat below is centred by the grid rather than by an
+     `auto` width that collapsed unpredictably. */
+  .result-media {
+    width: 100%;
+    padding: 0;
+    min-height: 0;
+  }
+
+  .product-image {
+    /* Bounded so the name and price are still on the first screenful — the
+       customer should not have to scroll to reach the number they asked
+       for. Anything below that is what the scroll is for. */
+    max-height: 26vh;
+    max-width: 100%;
+    margin: 0 auto;
+    /* A pale mat separates the photo from the card, which matters for
+       products shot on white. Plain value first so a browser without
+       color-mix still gets a mat rather than none. */
+    padding: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .image-placeholder {
+    max-height: 20vh;
+    aspect-ratio: 16 / 10;
+    margin: 0 auto;
+  }
+  .image-placeholder svg { width: 32px; height: 32px; }
+  .image-placeholder span { font-size: 12px; }
+
+  /* The description used to be dropped here, because it was the first thing
+     to sacrifice when everything had to fit one screenful. The panel scrolls
+     now, so it can stay — a customer who wants it can reach it. */
+  .product-description {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    font-size: 13px;
+  }
+
+  .product-company { align-self: center; font-size: 10px; padding: 2px 9px; }
+  .product-name {
+    font-size: clamp(16px, 4.6vw, 21px);
+    -webkit-line-clamp: 2;
+    line-height: 1.15;
+  }
+
+  /* Still the largest thing on screen. The tier is close to full width on a
+     phone, so the fit formula would happily go bigger than this; the cap is
+     what keeps a lone price from eating the whole first screenful. */
+  .price-tier { --price-cap: 52px; }
+  .result-stage:not([data-count="1"]) .price-tier { --price-cap: 30px; }
+
+  .price-meta { justify-content: center; gap: 9px; }
+  .product-mrp { font-size: clamp(14px, 4vw, 18px); }
+  .discount-badge { font-size: clamp(11px, 3.2vw, 14px); padding: 4px 10px; }
+
+  .availability { font-size: 12px; padding: 6px 13px; }
+  .result-code { font-size: 11px; }
+
+  .countdown-row { justify-content: center; gap: 10px; }
+  .voice-panel { font-size: 13px; padding: 8px 14px; }
+  .voice-transcript { max-width: 40vw; }
+  .countdown-hint { display: none; }
+}
+
+/* Short landscape screens (e.g. 1366x768, or any windowed browser).
+   Trim the non-essentials — but NOT the branding: the logo is the point of
+   the top bar, and an earlier 30px cap here quietly cancelled every size
+   increase made above. Keep it clearly visible and take the space back from
+   the scan artwork instead. */
+@media (max-height: 760px) and (orientation: landscape) {
+  .store-logo { max-height: 44px; }
+  .topbar { padding-top: 8px; padding-bottom: 8px; }
+  .topbar-logo { height: 60px; max-width: 240px; }
+  .topbar-monogram { width: 60px; height: 60px; font-size: 28px; }
+  .topbar-store { font-size: 19px; }
+  .console { gap: 10px; padding: 14px clamp(18px, 3vw, 36px); }
+  .scan-stage { padding: 12px 20px; }
+  .scan-card-art { height: 58px; }
+  .scan-sub { display: none; }
+  .product-image { max-height: 44vh; }
+  .image-placeholder { max-height: 38vh; }
+  .product-description { -webkit-line-clamp: 2; }
+}
+
+/* Very short screens: drop the description rather than crowd the price,
+   which is the one thing that must stay readable. */
+@media (max-height: 560px) {
+  .product-description { display: none; }
+  .product-name { -webkit-line-clamp: 1; }
+  /* Drop the decorative artwork; keep every control. */
+  .scan-card-art { display: none; }
+  .scan-sub { display: none; }
+  .voice-hint { display: none; }
+  .console { gap: 8px; padding: 12px 18px; }
+  .scan-stage { padding: 10px 16px; }
+  .store-logo { max-height: 36px; }
+  /* Even here the logo stays legible — space is taken from the artwork above,
+     not from the branding. */
+  .topbar { padding-top: 6px; padding-bottom: 6px; }
+  .topbar-logo { height: 46px; max-width: 190px; }
+  .topbar-monogram { width: 46px; height: 46px; font-size: 22px; }
+}

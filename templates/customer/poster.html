@@ -1,0 +1,48 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ settings.title }} — Poster</title>
+  {% comment %}
+    Same pair as the other customer pages: kiosk.css supplies the palette,
+    fonts and buttons, customer.css only the poster's own layout.
+  {% endcomment %}
+  <link rel="stylesheet" href="{% static 'css/kiosk.css' %}?v={{ asset_version }}">
+  <link rel="stylesheet" href="{% static 'css/customer.css' %}?v={{ asset_version }}">
+  <style>
+    :root {
+      --bg-start: {{ theme.bg_start }};
+      --bg-end: {{ theme.bg_end }};
+      --accent: {{ theme.accent }};
+      --price: {{ theme.price }};
+      --text: {{ theme.text }};
+      --text-dim: {{ theme.text_dim }};
+      --ok: {{ theme.in_stock }};
+      --bad: {{ theme.out_of_stock }};
+    }
+  </style>
+</head>
+<body class="poster-body">
+
+  <div class="poster-toolbar no-print">
+    <button type="button" onclick="window.print()" class="btn btn--primary">Print poster</button>
+    <span class="poster-hint">Use your browser's print dialog — this page is sized for A4/Letter.</span>
+  </div>
+
+  <div class="poster-sheet">
+    {% if logo_url %}
+      <img class="poster-logo" src="{{ logo_url }}" alt="">
+    {% endif %}
+    <h1 class="poster-title">{{ settings.title }}</h1>
+    {% if settings.subtitle %}<p class="poster-subtitle">{{ settings.subtitle }}</p>{% endif %}
+
+    <img class="poster-qr" src="{% url 'customer:qr' %}" alt="Scan to check prices">
+
+    <p class="poster-instructions">{{ poster_instructions }}</p>
+    <p class="poster-footnote">{{ navbar_title }}</p>
+  </div>
+
+</body>
+</html>

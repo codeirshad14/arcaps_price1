@@ -1,0 +1,129 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="{{ theme.bg_start }}">
+  <title>{{ settings.title }}</title>
+
+  {# Same pair as the other customer pages — one look, one source. #}
+  <link rel="stylesheet" href="{% static 'css/kiosk.css' %}?v={{ asset_version }}">
+  <link rel="stylesheet" href="{% static 'css/customer.css' %}?v={{ asset_version }}">
+
+  {% if visit_ended %}
+  {% comment %}
+    Back-button trap, for a browser whose visit has just ended.
+
+    The visit is over, so there is nothing behind this page worth returning
+    to: every earlier entry is either the price list from a session that no
+    longer exists or the sign-in form, and reaching either by pressing Back
+    would be a way around scanning the poster.
+
+    An extra history entry is pushed so there is always something to pop, and
+    each pop puts it straight back. The effect is that Back leaves the
+    customer here, reading how to start again.
+
+    Only armed for a browser that actually finished a visit — see the view.
+    Someone who simply mistyped an address can still go back where they came
+    from.
+  {% endcomment %}
+  <script>
+    (function () {
+      "use strict";
+      try {
+        history.pushState(null, document.title, location.href);
+        window.addEventListener("popstate", function () {
+          history.pushState(null, document.title, location.href);
+        });
+      } catch (err) { /* very old browser: the page still reads correctly */ }
+    })();
+  </script>
+  {% endif %}
+
+  <style>
+    :root {
+      --bg-start: {{ theme.bg_start }};
+      --bg-end: {{ theme.bg_end }};
+      --accent: {{ theme.accent }};
+      --price: {{ theme.price }};
+      --text: {{ theme.text }};
+      --text-dim: {{ theme.text_dim }};
+      --ok: {{ theme.in_stock }};
+      --bad: {{ theme.out_of_stock }};
+      --card-alpha: {{ theme.card_opacity|default:8 }}%;
+      {% if background_url %}
+      --bg-image: url('{{ background_url }}');
+      --bg-overlay: {{ background_overlay }}%;
+      {% endif %}
+    }
+  </style>
+</head>
+
+<body class="{% if background_url %}has-bg-image{% endif %} is-customer is-signin"
+      data-bg-fit="{{ background_fit|default:'cover' }}">
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+<div class="page">
+
+  <header class="topbar">
+    <div class="topbar-brand">
+      {% if logo_url %}
+        <img class="topbar-logo" src="{{ logo_url }}" alt="{{ navbar_title }}">
+      {% else %}
+        <span class="topbar-monogram" aria-hidden="true">{{ navbar_title|slice:":1"|upper }}</span>
+      {% endif %}
+      <div class="topbar-titles">
+        <span class="topbar-store">{{ navbar_title }}</span>
+        <span class="topbar-meta">{{ navbar_subtitle }}</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+    {% comment %}
+      One centred console, like the sign-in page. There is deliberately no
+      button and no link to the entry URL: the poster is the only way back
+      in, which is the whole point of the entry address carrying a token.
+    {% endcomment %}
+    <div class="stage stage--single">
+      <section class="stage-left">
+        <section class="console">
+          <span class="console-sheen" aria-hidden="true"></span>
+
+          <header class="console-brand">
+            <h1 class="welcome">{{ welcome_heading }}</h1>
+          </header>
+
+          <div class="scan-stage">
+            <span class="stage-corner stage-corner--tl" aria-hidden="true"></span>
+            <span class="stage-corner stage-corner--tr" aria-hidden="true"></span>
+            <span class="stage-corner stage-corner--bl" aria-hidden="true"></span>
+            <span class="stage-corner stage-corner--br" aria-hidden="true"></span>
+
+            {% comment %}
+              The QR artwork from the other screens, reused as the picture of
+              what the customer is being asked to go and do.
+            {% endcomment %}
+            <div class="scan-card-art" aria-hidden="true">
+              <div class="barcode">
+                <i style="--h:62%"></i><i style="--h:92%"></i><i style="--h:44%"></i>
+                <i style="--h:78%"></i><i style="--h:100%"></i><i style="--h:52%"></i>
+                <i style="--h:86%"></i><i style="--h:36%"></i><i style="--h:70%"></i>
+                <i style="--h:96%"></i><i style="--h:48%"></i><i style="--h:82%"></i>
+              </div>
+              <span class="scan-beam"></span>
+            </div>
+
+            <p class="scan-title">{{ expired_heading }}</p>
+            <p class="scan-sub">{{ expired_message }}</p>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+</div><!-- /.page -->
+
+</body>
+</html>

@@ -1,0 +1,68 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div style="max-width:760px;">
+
+  <p>
+    This issues a <strong>new customer QR code</strong>. Use it whenever you
+    think the printed address has been copied &mdash; for example if someone is
+    checking your prices every day without coming into the shop. There is no
+    schedule: change it as often as you want.
+  </p>
+
+  <h2 style="margin-top:24px;">What will happen</h2>
+  <ul>
+    <li>
+      The current address
+      <code>{{ settings_row.entry_path }}</code>
+      <strong>stops working immediately</strong>. Anyone who saved it, wrote it
+      down or photographed the poster can no longer get in.
+    </li>
+    <li>
+      {% if active_visits %}
+        <strong>{{ active_visits }} customer visit(s) happening right now will
+        be signed out</strong> and will see the &ldquo;scan to log in
+        again&rdquo; page.
+      {% else %}
+        No customer is signed in at the moment, so nobody will be interrupted.
+      {% endif %}
+    </li>
+    <li>
+      <strong>The printed poster becomes useless and must be reprinted.</strong>
+      Scanning the old one will lead nowhere.
+    </li>
+  </ul>
+
+  <h2 style="margin-top:24px;">What will not change</h2>
+  <ul>
+    <li>All your wording, branding, colours and session length stay exactly as they are.</li>
+    <li>Your products, prices and past customer records are untouched.</li>
+    <li>The staff counter screen is not affected at all.</li>
+  </ul>
+
+  <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;
+              padding:14px 18px;margin:24px 0;">
+    <strong>Before you press the button:</strong> be ready to print the new
+    poster and put it out. Between changing the code and putting the new poster
+    on the counter, customers have no way to reach the price page.
+  </div>
+
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit" class="button"
+            style="background:#b91c1c;color:#fff;padding:10px 20px;
+                   border:0;border-radius:6px;font-weight:600;cursor:pointer;">
+      Yes, change the QR code now
+    </button>
+    <a href="{% url 'admin:products_customerportalsettings_change' settings_row.pk %}"
+       class="button cancel-link" style="margin-left:12px;">Cancel</a>
+  </form>
+
+  <p class="help" style="margin-top:20px;">
+    After changing it, open
+    <a href="/customer/poster/" target="_blank">/customer/poster/</a>
+    to print the new poster.
+  </p>
+
+</div>
+{% endblock %}

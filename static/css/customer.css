@@ -1,0 +1,253 @@
+/* ==========================================================================
+   Customer portal — the few things the kiosk does not have.
+   --------------------------------------------------------------------------
+   Loaded AFTER kiosk.css, and deliberately tiny. The customer pages are the
+   kiosk: same markup, same stylesheet, same price fitting. This file adds
+   only what a customer needs and a staff screen does not — the visit timer,
+   the "Done" button and the name/mobile sign-in card — plus the handful of
+   kiosk affordances that make no sense on a customer's own phone.
+
+   This file used to be a second, complete stylesheet that redefined cards,
+   buttons and price tiers itself. That is why the two pages drifted: every
+   fix to the kiosk had to be made twice, and in practice was not. Anything
+   added here that is not customer-specific will start that over — put it in
+   kiosk.css instead.
+   ========================================================================== */
+
+/* ---------- 1. Kiosk affordances a customer has no use for ---------------- */
+
+/*
+  There is no barcode scanner on a customer's phone, so the console's
+  scan-window still frames the input (that is the look) but must not animate
+  as though it were waiting for a tag to be presented.
+*/
+.is-customer .scan-beam { display: none; }
+
+/* ---------- 2. Visit timer and Done button -------------------------------- */
+
+.corner-controls .session-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.corner-controls .session-badge svg { width: 15px; height: 15px; }
+
+/* The last minute reads as urgent rather than merely informational. */
+.corner-controls .session-badge.is-low {
+  color: var(--bad);
+  border-color: var(--bad-line);
+  background: var(--bad-soft);
+}
+
+.logout-form { margin: 0; display: flex; }
+
+/* ---------- 3. Sign-in card ----------------------------------------------- */
+
+/*
+  The landing page has no product to show, so it drops the kiosk's second
+  column and centres the console instead of leaving an empty half-screen.
+*/
+.stage--single { grid-template-columns: minmax(0, 1fr); max-width: 620px; }
+.stage--single .stage-left { justify-content: center; }
+
+.portal-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.portal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+  width: 100%;
+}
+
+.portal-label {
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* The inputs themselves are .manual-input, styled by kiosk.css — the sign-in
+   fields and the code field are the same control. */
+
+.portal-error { margin: 2px 0 0; color: var(--bad); font-size: 12px; }
+
+.portal-messages {
+  margin: 0;
+  padding: 11px 15px;
+  list-style: none;
+  width: 100%;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.portal-note {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---------- 4. Printable counter poster ----------------------------------- */
+
+/*
+  The one customer page that is not a screen — but it should still look like
+  the rest of the product, so the sheet carries the shop's theme rather than
+  being a white page with a QR on it.
+
+  The one thing that stays white is the QR itself. A code needs a light
+  quiet-zone and high contrast to scan reliably from a phone at arm's length,
+  so it sits on its own white tile whatever the theme is. That is a scanning
+  requirement, not a style choice.
+*/
+.poster-body {
+  margin: 0;
+  min-height: 100vh;
+  padding: 20px 16px 40px;
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(900px 600px at 12% -10%, var(--accent-glow), transparent 60%),
+    linear-gradient(150deg, var(--bg-start), var(--bg-end));
+}
+
+.poster-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.poster-hint { color: var(--text-dim); font-size: 13px; }
+
+/*
+  Sized to sit comfortably on screen without being either a postage stamp or
+  a wall of card: capped in BOTH directions, and by viewport height as well
+  as width so it does not overflow a laptop screen. A4 is roughly 1:1.41, and
+  the sheet keeps that proportion so what is on screen matches what prints.
+*/
+.poster-sheet {
+  width: min(100%, 560px);
+  max-height: none;
+  margin: 0 auto;
+  padding: clamp(28px, 4vw, 44px) clamp(22px, 4vw, 40px) clamp(32px, 4.5vw, 48px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(12px, 1.8vw, 18px);
+  text-align: center;
+  background: linear-gradient(155deg, var(--card-top), var(--card-bottom));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.poster-logo { max-height: 72px; max-width: 240px; object-fit: contain; }
+
+.poster-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(26px, 4vw, 38px);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.poster-subtitle {
+  margin: 0;
+  font-size: clamp(14px, 1.8vw, 17px);
+  color: var(--text-dim);
+}
+
+/* White tile and a real quiet zone: this has to scan, so it does not get
+   the theme treatment the rest of the sheet does. */
+.poster-qr {
+  width: min(72%, 280px);
+  height: auto;
+  margin: 4px 0;
+  padding: 14px;
+  background: #fff;
+  border-radius: 14px;
+  image-rendering: pixelated;
+}
+
+.poster-instructions {
+  margin: 0;
+  max-width: 42ch;
+  font-size: clamp(13px, 1.6vw, 16px);
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.poster-footnote {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+@media print {
+  /*
+    Printing is the one place the theme has to give way: a dark sheet would
+    drain a cartridge and, more importantly, print the QR as light-on-dark,
+    which many phone cameras will not read. So the printed sheet is ink-light
+    with dark text, while the screen keeps the shop's colours.
+  */
+  .no-print { display: none !important; }
+
+  .poster-body { padding: 0; background: #fff; color: #101426; }
+
+  .poster-sheet {
+    width: 100%;
+    max-width: none;
+    padding: 18mm 16mm;
+    gap: 8mm;
+    background: #fff;
+    color: #101426;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .poster-title { color: #101426; }
+  .poster-subtitle, .poster-instructions { color: #2c3348; }
+  .poster-footnote { color: #6b7288; }
+  .poster-qr { width: 78mm; padding: 4mm; border: 1px solid #d8dce8; }
+
+  @page { margin: 12mm; }
+}
+
+/* ---------- 5. Phone ------------------------------------------------------ */
+
+@media (max-width: 560px) {
+  .corner-controls .session-badge { padding: 6px 10px; font-size: 12px; }
+  .portal-note { font-size: 11px; }
+  .poster-sheet { padding: 32px 22px 40px; }
+}

@@ -1,0 +1,414 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="{{ theme.bg_start }}">
+  <title>{{ display.store_name }} — Price Checker</title>
+
+  {# All styling is local: the showroom PC must look right with the internet down. #}
+  <link rel="stylesheet" href="{% static 'css/kiosk.css' %}?v={{ asset_version }}">
+
+  {% comment %}
+    The station's palette is written server-side so the first paint is already
+    themed. Without this the default colours flash before the JS applies the
+    real ones.
+
+    Note on comments: the hash-brace form is SINGLE LINE in Django. Django
+    matches it without DOTALL, so one spanning several lines is not recognised
+    as a comment at all and renders as visible text on the page. Use the
+    comment/endcomment tag pair for anything spanning lines.
+  {% endcomment %}
+  <style>
+    :root {
+      --bg-start: {{ theme.bg_start }};
+      --bg-end: {{ theme.bg_end }};
+      --accent: {{ theme.accent }};
+      --price: {{ theme.price }};
+      --text: {{ theme.text }};
+      --text-dim: {{ theme.text_dim }};
+      --ok: {{ theme.in_stock }};
+      --bad: {{ theme.out_of_stock }};
+      --card-alpha: {{ theme.card_opacity }}%;
+      {% if background_url %}
+      --bg-image: url('{{ background_url }}');
+      --bg-overlay: {{ background_overlay }}%;
+      {% endif %}
+    }
+  </style>
+</head>
+
+<body class="{% if background_url %}has-bg-image{% endif %}"
+      data-bg-fit="{{ background_fit|default:'cover' }}">
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+<div class="page">
+
+  {% comment %}
+    Top bar: company identity on the left, controls on the right — the
+    convention people already know from every other application. It also frees
+    the console below to be purely about scanning.
+  {% endcomment %}
+  <header class="topbar">
+    <div class="topbar-brand">
+      {% if logo_url %}
+        <img class="topbar-logo" src="{{ logo_url }}" alt="{{ display.store_name }}">
+      {% else %}
+        {# No logo uploaded: a monogram keeps the bar from looking unfinished. #}
+        <span class="topbar-monogram" aria-hidden="true">
+          {{ display.store_name|slice:":1"|upper }}
+        </span>
+      {% endif %}
+
+      {% comment %}
+        Name and role word both come from ScreenHeaderSettings, which drives
+        the customer portal's bar too — the shop name is one setting, not one
+        per page. Which station is in force is only shown when the admin asks
+        for it: useful while setting a machine up, noise once it is running.
+      {% endcomment %}
+      <span class="topbar-titles">
+        <span class="topbar-store">{{ navbar_title }}</span>
+        <span class="topbar-meta">
+          <span class="topbar-role">{{ navbar_subtitle }}</span>
+          {% if show_station_label %}<span id="station-label"></span>{% endif %}
+          {% if user.is_authenticated %}
+            <span class="topbar-user">· {{ user.get_username }}</span>
+          {% endif %}
+        </span>
+      </span>
+    </div>
+
+    <div class="corner-controls">
+    {% if user.is_authenticated %}
+      {% comment %}
+        Django 5 removed GET logout, so this must be a POST form — a plain
+        link would return 405.
+      {% endcomment %}
+      <form method="post" action="{% url 'kiosk:logout' %}" class="logout-form">
+        {% csrf_token %}
+        <button type="submit" class="icon-button"
+                title="Sign out ({{ user.get_username }})"
+                aria-label="Sign out {{ user.get_username }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <path d="M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+        </button>
+      </form>
+    {% endif %}
+
+    <button id="mute-toggle" class="icon-button" title="Mute spoken price"
+            aria-label="Mute spoken price" hidden>
+      <svg class="icon-unmuted" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>
+        <path d="M18.5 5.5a9 9 0 0 1 0 13"/>
+      </svg>
+      <svg class="icon-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+        <path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M22 9l-6 6M16 9l6 6"/>
+      </svg>
+    </button>
+    <button id="station-button" class="icon-button" title="Change station"
+            aria-label="Change station">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+    </button>
+    <button id="fullscreen-toggle" class="icon-button" title="Toggle fullscreen"
+            aria-label="Toggle fullscreen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>
+      </svg>
+    </button>
+    </div>
+  </header>
+
+  {% comment %}
+    Single page, split in two.
+
+    The left column is the scan console and never goes away — staff scan one
+    item after another, and hiding the input between scans would be wrong.
+    The right column is the only thing that changes: placeholder, product, or
+    not-found. A new scan replaces the right column immediately, whatever the
+    countdown is doing.
+  {% endcomment %}
+  <main id="app">
+    <div class="stage">
+
+      <!-- ================= LEFT: scan console (always visible) ============= -->
+      <section class="stage-left">
+
+        {% comment %}
+          One console rather than several floating boxes.
+
+          Scanning is what happens 99% of the time, so it sits in an inset
+          "scanner window" — a recessed surface reads as somewhere you present
+          a tag to, which a flat card does not. Typing and speaking are real
+          options but secondary, so they live in a quieter action bar below a
+          hairline, not as equal siblings.
+        {% endcomment %}
+        <section class="console">
+          <span class="console-sheen" aria-hidden="true"></span>
+
+          {# The logo lives in the top bar now; this is the greeting only. #}
+          <header class="console-brand">
+            <h1 class="welcome">{{ display.welcome_message }}</h1>
+          </header>
+
+          {# ---------- Primary: the scan window ---------- #}
+          <div class="scan-stage">
+            <span class="stage-corner stage-corner--tl" aria-hidden="true"></span>
+            <span class="stage-corner stage-corner--tr" aria-hidden="true"></span>
+            <span class="stage-corner stage-corner--bl" aria-hidden="true"></span>
+            <span class="stage-corner stage-corner--br" aria-hidden="true"></span>
+
+            <div class="scan-card-art" aria-hidden="true">
+              {# Bars are elements so each can animate on its own delay. #}
+              <div class="barcode">
+                <i style="--h:62%"></i><i style="--h:92%"></i><i style="--h:44%"></i>
+                <i style="--h:78%"></i><i style="--h:100%"></i><i style="--h:52%"></i>
+                <i style="--h:86%"></i><i style="--h:36%"></i><i style="--h:70%"></i>
+                <i style="--h:96%"></i><i style="--h:48%"></i><i style="--h:82%"></i>
+              </div>
+              <span class="scan-beam"></span>
+            </div>
+
+            <p class="scan-title">Scan the barcode or QR code</p>
+            <p class="scan-sub">Hold the tag steady in front of the scanner</p>
+          </div>
+
+          {# ---------- Secondary: manual entry ---------- #}
+          <div class="console-divider"><span>or enter the number</span></div>
+
+          <form id="manual-form" class="manual-form" autocomplete="off">
+            <div class="input-wrap">
+              <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2"/>
+                <path d="M8 8v8M11 8v8M14 8v8M17 8v8"/>
+              </svg>
+              {% comment %}
+                This one box is both the scanner's target and the typing box,
+                and kiosk.js keeps the cursor in it at all times — a scan is
+                lost if anything else holds focus. It used to be caught by a
+                second, offscreen input, which meant staff had to click here
+                before they could type.
+              {% endcomment %}
+              <input id="manual-input" class="manual-input" type="text" inputmode="text"
+                     placeholder="Scan a tag, or enter the number"
+                     aria-label="Scan a tag, or enter a barcode or QR code number"
+                     autocomplete="off" autocorrect="off" autocapitalize="off"
+                     spellcheck="false" autofocus>
+            </div>
+            <button type="submit" class="btn btn--primary" id="manual-submit">
+              Show Price
+            </button>
+          </form>
+
+          {# ---------- Tertiary: voice ---------- #}
+          <div class="voice-row" id="panel-speak">
+            <button type="button" id="mic-button" class="btn btn--ghost" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/>
+              </svg>
+              <span id="mic-label">Speak the code</span>
+            </button>
+
+            <button type="button" id="wake-stop" class="btn btn--danger btn--small" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+              <span id="wake-stop-label">Stop mic</span>
+            </button>
+
+            {% comment %}
+              Always-visible language indicator. It shows what the microphone
+              will listen for before you press it, and what it actually used
+              afterwards — not only while recording.
+            {% endcomment %}
+            <span class="voice-lang" id="voice-lang-badge" title="Voice language">
+              English
+            </span>
+
+            <span class="voice-hint" id="speak-hint">
+              English, हिंदी or मराठी
+            </span>
+          </div>
+
+          {% comment %}
+            Live speech transcript so the customer can see what was heard.
+            The language chip is an indicator, not a control — detection is
+            automatic.
+          {% endcomment %}
+          <div id="voice-panel" class="voice-panel" hidden>
+            <span class="voice-dot" aria-hidden="true"></span>
+            <span class="voice-lang" id="voice-lang"></span>
+            <span class="voice-status" id="voice-status">Listening…</span>
+            <span class="voice-transcript" id="voice-transcript"></span>
+          </div>
+        </section>
+
+      </section>
+
+      <!-- ================= RIGHT: product detail ========================== -->
+      <section class="stage-right">
+
+        {# --- Waiting for a scan --- #}
+        <div id="view-idle" class="detail-view is-active">
+          <div class="detail-empty">
+            <div class="detail-empty-art" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
+                <path d="M7 9v6M10.5 9v6M14 9v6M17 9v6"/>
+              </svg>
+            </div>
+            <h2 class="detail-empty-title">Ready to scan</h2>
+            <p class="detail-empty-sub">The price will appear here</p>
+          </div>
+        </div>
+
+        {# --- Product(s) --- #}
+        <div id="view-result" class="detail-view">
+          {# Cards are built by JavaScript from the template below. #}
+          <div class="result-stage" id="result-stage"></div>
+
+          <div class="countdown">
+            <div class="countdown-bar"><span id="countdown-fill"></span></div>
+            <div class="countdown-row">
+              <span id="countdown-text" class="countdown-text"></span>
+              <span id="multi-hint" class="countdown-hint" hidden>
+                Scan another to compare
+              </span>
+              <button type="button" id="scan-next" class="btn btn--ghost btn--small">
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {# --- Not found --- #}
+        <div id="view-notfound" class="detail-view">
+          <div class="notfound-card">
+            <div class="notfound-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v5M12 16.5v.01"/>
+              </svg>
+            </div>
+            <h2 class="notfound-title">Product not found</h2>
+            <p class="notfound-sub">Please ask a staff member for help.</p>
+            <div class="notfound-code">
+              Scanned code: <strong id="notfound-code"></strong>
+            </div>
+          </div>
+
+          <div class="countdown">
+            <div class="countdown-bar"><span id="countdown-fill-nf"></span></div>
+            <div class="countdown-row">
+              <span id="countdown-text-nf" class="countdown-text"></span>
+              <button type="button" id="scan-next-nf" class="btn btn--ghost btn--small">
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div><!-- /.page -->
+
+  <!-- ================= STATION PICKER ================= -->
+  <div id="station-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="station-modal-title">
+      <h2 class="modal-title" id="station-modal-title">Choose this system's station</h2>
+      <p class="modal-sub">
+        Saved on this computer only. Each system can use a different station,
+        with its own prices, timing and colours.
+      </p>
+      <div class="station-list" id="station-list"></div>
+      <button type="button" class="btn btn--ghost btn--small" id="station-cancel">
+        Cancel
+      </button>
+    </div>
+  </div>
+
+  {% comment %}
+    A product card, cloned by JavaScript for each result. Keeping the markup
+    here rather than building strings in JS avoids any HTML injection from
+    product names.
+  {% endcomment %}
+  <template id="product-card-template">
+    <article class="result-card">
+      <div class="result-media">
+        <img class="product-image" alt="" hidden>
+        <div class="image-placeholder" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+          <span>No Image Available</span>
+        </div>
+      </div>
+
+      <div class="result-details">
+        {# Which company this product belongs to. Only shown when it matters. #}
+        <span class="product-company" hidden></span>
+        <h2 class="product-name"></h2>
+        {% comment %}
+          One mini price-block per price list (Retail, Wholesale, ...),
+          cloned from #price-tier-template below — see kiosk.js buildPriceTier().
+        {% endcomment %}
+        <div class="price-tiers"></div>
+        <p class="product-description" hidden></p>
+        {% comment %}
+          The wholesale rate, below the description. Filled by kiosk.js from
+          the non-default entries in `prices`, which is what leaves the retail
+          price alone above as the card's single hero figure.
+        {% endcomment %}
+        <div class="wholesale-line" hidden></div>
+        <div class="availability" hidden></div>
+        <div class="result-code"></div>
+      </div>
+    </article>
+  </template>
+
+  {% comment %}
+    One price-list tier (e.g. "Retail" or "Wholesale"), cloned once per tier
+    onto a product card. Keeping this as its own template — rather than
+    building it in JS — means a price-list name can never inject markup.
+  {% endcomment %}
+  <template id="price-tier-template">
+    <div class="price-tier">
+      <span class="tier-label"></span>
+      <div class="product-price"></div>
+      <div class="price-meta">
+        <span class="product-mrp" hidden></span>
+        <span class="discount-badge" hidden></span>
+      </div>
+    </div>
+  </template>
+
+  {# A small non-blocking message area for network/API errors. #}
+  <div id="toast" class="toast" hidden></div>
+
+  {# Server-rendered first paint of the display block. json_script escapes safely. #}
+  {{ initial_display|json_script:"initial-display" }}
+
+  <script src="{% static 'js/price-fit.js' %}?v={{ asset_version }}"></script>
+  <script src="{% static 'js/price-speech.js' %}?v={{ asset_version }}"></script>
+  <script src="{% static 'js/kiosk.js' %}?v={{ asset_version }}"></script>
+</body>
+</html>

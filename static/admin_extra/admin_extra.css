@@ -1,0 +1,73 @@
+/* ==========================================================================
+   Small admin refinements, loaded via JAZZMIN_SETTINGS["custom_css"].
+   ========================================================================== */
+
+/* The injected logout button. Tinted so it reads as "leave", and separated
+   from the other navbar items by a hairline rather than more colour. */
+#jazzy-visible-logout .nav-link {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+  color: #c0392b;
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
+  margin-left: 4px;
+  padding-left: 14px;
+}
+
+#jazzy-visible-logout .nav-link:hover,
+#jazzy-visible-logout .nav-link:focus {
+  color: #e74c3c;
+}
+
+/* On a dark navbar the same red is too muddy; lift it. */
+.navbar-dark #jazzy-visible-logout .nav-link,
+[data-bs-theme="dark"] #jazzy-visible-logout .nav-link {
+  color: #ff8a80;
+  border-left-color: rgba(255, 255, 255, 0.18);
+}
+
+/* Keep the word out of the way on small screens; the icon still reads. */
+@media (max-width: 575px) {
+  #jazzy-visible-logout .nav-link { font-size: 0; padding-left: 10px; }
+  #jazzy-visible-logout .nav-link i { font-size: 1rem; margin-right: 0 !important; }
+}
+
+/* Product/price thumbnails sit better with a touch of breathing room. */
+#result_list td img { vertical-align: middle; }
+
+/* Username next to the account icon, injected by admin_logout.js — Jazzmin
+   otherwise only shows it as a hover tooltip. */
+.jazzy-username {
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+/*
+  The account icon defaults to AdminLTE's dim navbar colour and only
+  brightens on hover, which reads as "invisible until you hover". Give it
+  full contrast all the time — but in the colour that suits the bar it is
+  on. This rule used to hardcode white, which is why the icon disappeared
+  completely against the light navbar instead of merely being dim.
+*/
+a.nav-link.btn[data-bs-toggle="dropdown"] {
+  color: rgba(0, 0, 0, 0.75);
+  opacity: 1;
+}
+
+a.nav-link.btn[data-bs-toggle="dropdown"]:hover,
+a.nav-link.btn[data-bs-toggle="dropdown"]:focus {
+  color: #000;
+}
+
+/* Dark navbar, either from the UI tweak or from Jazzmin's dark-mode toggle. */
+.navbar-dark a.nav-link.btn[data-bs-toggle="dropdown"],
+[data-bs-theme="dark"] a.nav-link.btn[data-bs-toggle="dropdown"] {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.navbar-dark a.nav-link.btn[data-bs-toggle="dropdown"]:hover,
+.navbar-dark a.nav-link.btn[data-bs-toggle="dropdown"]:focus,
+[data-bs-theme="dark"] a.nav-link.btn[data-bs-toggle="dropdown"]:hover,
+[data-bs-theme="dark"] a.nav-link.btn[data-bs-toggle="dropdown"]:focus {
+  color: #fff;
+}

@@ -1,0 +1,94 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="{{ theme.bg_start }}">
+  <title>Sign in — {{ navbar_title }}</title>
+
+  <link rel="stylesheet" href="{% static 'css/kiosk.css' %}?v={{ asset_version }}">
+
+  {% comment %}
+    Same palette as the kiosk itself, written server-side, so signing in does
+    not look like a different application.
+  {% endcomment %}
+  <style>
+    :root {
+      --bg-start: {{ theme.bg_start }};
+      --bg-end: {{ theme.bg_end }};
+      --accent: {{ theme.accent }};
+      --price: {{ theme.price }};
+      --text: {{ theme.text }};
+      --text-dim: {{ theme.text_dim }};
+      --ok: {{ theme.in_stock }};
+      --bad: {{ theme.out_of_stock }};
+      --card-alpha: {{ theme.card_opacity }}%;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="bg-layer" aria-hidden="true"></div>
+
+  <main id="app">
+    <div class="login-wrap">
+      <form class="console login-console" method="post" action="">
+        <span class="console-sheen" aria-hidden="true"></span>
+        {% csrf_token %}
+
+        <header class="console-brand">
+          {% if logo_url %}
+            <img class="store-logo" src="{{ logo_url }}" alt="{{ navbar_title }}">
+          {% endif %}
+          <h1 class="welcome">{{ navbar_title }}</h1>
+          <p class="scan-sub">Sign in to open the price checker</p>
+        </header>
+
+        {% if form.errors %}
+          <div class="login-error" role="alert">
+            {% if form.non_field_errors %}
+              {% for error in form.non_field_errors %}{{ error }}{% endfor %}
+            {% else %}
+              Please correct the errors below.
+            {% endif %}
+          </div>
+        {% endif %}
+
+        <div class="login-fields">
+          <label class="login-field">
+            <span class="login-label">{{ form.username.label }}</span>
+            {{ form.username }}
+            {% for error in form.username.errors %}
+              <span class="login-field-error">{{ error }}</span>
+            {% endfor %}
+          </label>
+
+          <label class="login-field">
+            <span class="login-label">{{ form.password.label }}</span>
+            {{ form.password }}
+            {% for error in form.password.errors %}
+              <span class="login-field-error">{{ error }}</span>
+            {% endfor %}
+          </label>
+
+          {# Ticked by default: a showroom PC should sign in once and stay in. #}
+          <label class="login-remember">
+            {{ form.remember_device }}
+            <span>
+              <strong>{{ form.remember_device.label }}</strong>
+              <em>{{ form.remember_device.help_text }}</em>
+            </span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn--primary login-submit">Sign in</button>
+
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      </form>
+
+      <p class="station-label">{{ display.name }} · Price Checker</p>
+    </div>
+  </main>
+</body>
+</html>

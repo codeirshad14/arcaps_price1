@@ -1,0 +1,16 @@
+# Price Checker — pinned dependencies.
+# Install with:  pip install -r requirements.txt
+
+Django==5.2.17
+djangorestframework==3.18.0
+django-jazzmin==3.0.5
+django-cors-headers==4.9.0
+django-import-export==4.4.1
+Pillow==12.3.0
+python-decouple==3.8
+qrcode==8.0
+
+# PostgreSQL driver. Required in production; harmless on a SQLite laptop,
+# where it is simply never imported. The [binary] extra ships prebuilt
+# libpq wheels, so no compiler or PostgreSQL client headers are needed.
+psycopg[binary]==3.2.3
