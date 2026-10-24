@@ -35,12 +35,12 @@ DOMAIN = "arcapworks.in"
 # True while working on your own computer.
 # MUST be False on the live server, or visitors can see error pages with
 # your settings in them.
-DEBUG = True
+DEBUG = False
 
 # --- Database --------------------------------------------------------------
 # False -> the db.sqlite3 file next to manage.py (your own computer)
 # True  -> PostgreSQL, using the details below (the live server)
-USE_POSTGRES = False
+USE_POSTGRES = True
 
 DB_NAME = "arcapsprice"
 DB_USER = "arcapsprice"
@@ -263,7 +263,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ---------------------------------------------------------------------------
 
 # Shared secret required in the X-API-Key header on POST /api/tally-product/.
-TALLY_API_KEY = config("TALLY_API_KEY", default="")
+TALLY_API_KEY = "MwKTgK4rwcdIF6eGKZJ5eK8vKZpFjSwLaNuH8mBBKbk"
 
 
 # ---------------------------------------------------------------------------

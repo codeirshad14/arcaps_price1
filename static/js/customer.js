@@ -76,7 +76,7 @@
     if (!isFinite(amount)) return String(value || "");
     var hasPaise = Math.round(amount * 100) % 100 !== 0;
     var text = amount.toLocaleString("en-IN", {
-      minimumFractionDigits: hasPaise ? 2 : 0,
+      minimumFractionDigits:2,
       maximumFractionDigits: 2
     });
     return (symbol || "") + text;

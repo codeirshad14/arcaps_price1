@@ -176,7 +176,7 @@
     if (!isFinite(amount)) return String(value || "");
     var hasPaise = Math.round(amount * 100) % 100 !== 0;
     var text = amount.toLocaleString("en-IN", {
-      minimumFractionDigits: hasPaise ? 2 : 0,
+      minimumFractionDigits: 2,
       maximumFractionDigits: 2
     });
     return (symbol || "") + text;
@@ -275,7 +275,7 @@
    * lost whenever anything else holds focus — which is why this is enforced
    * rather than merely set once at startup. The station dialog is the single
    * exception: fighting it for focus would make its buttons unusable.
-   */
+  
   function keepCodeFocus() {
     if (!el.manualInput) return;
     if (el.stationModal && !el.stationModal.hidden) return;
@@ -283,6 +283,23 @@
       el.manualInput.focus({ preventScroll: true });
     }
   }
+ */
+  function keepCodeFocus() {
+    if (!el.manualInput) return;
+    if (el.stationModal && !el.stationModal.hidden) return;
+    // macOS enters fullscreen with a native ~1s window animation. Stealing
+    // focus while that is in flight makes the browser abandon it, so the
+    // screen flicks in and straight back out. Windows/Android transition
+    // instantly and never hit this.
+    if (state.fullscreenPending) return;
+    if (document.activeElement !== el.manualInput) {
+      el.manualInput.focus({ preventScroll: true });
+    }
+  }
+
+
+
+
 
   function bindFocusGuards() {
     // Anything that takes focus — pressing a button, a stray click on the
@@ -1793,7 +1810,7 @@
     // (logo, welcome text) for the new station.
     window.location.href = "/?station=" + encodeURIComponent(slug);
   }
-
+/*
   function bindFullscreen() {
     el.fullscreenToggle.addEventListener("click", function () {
       if (!document.fullscreenElement) {
@@ -1807,7 +1824,59 @@
     });
   }
 
-  /* ---------- 15. Boot ---------------------------------------------------- */
+
+
+
+   ---------- 15. Boot ---------------------------------------------------- */
+  /* iPhone has no Fullscreen API for ordinary elements at all, and Safari
+     before 16.4 only had the webkit-prefixed names. Probe rather than assume,
+     and hide the button outright when there is nothing behind it. */
+  function fullscreenSupported() {
+    var d = document.documentElement;
+    return !!(d.requestFullscreen || d.webkitRequestFullscreen);
+  }
+
+  function bindFullscreen() {
+    if (!el.fullscreenToggle) return;
+    if (!fullscreenSupported()) { hide(el.fullscreenToggle); return; }
+
+    // Held while the transition is animating, so the focus guard stands down.
+    // Cleared by fullscreenchange, with a timer as a backstop in case the
+    // request is refused and no event ever arrives.
+    function settle() {
+      state.fullscreenPending = false;
+      setTimeout(keepCodeFocus, 50);
+    }
+    document.addEventListener("fullscreenchange", settle);
+    document.addEventListener("webkitfullscreenchange", settle);
+
+    el.fullscreenToggle.addEventListener("click", function () {
+      var d = document.documentElement;
+      var active = document.fullscreenElement || document.webkitFullscreenElement;
+
+      state.fullscreenPending = true;
+      setTimeout(settle, 1500);
+
+      try {
+        if (active) {
+          (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+        } else {
+          // May return a promise or nothing, depending on the browser.
+          var result = (d.requestFullscreen || d.webkitRequestFullscreen).call(d);
+          if (result && result.catch) {
+            result.catch(function () {
+              settle();
+              toast("Fullscreen was blocked by the browser.");
+            });
+          }
+        }
+      } catch (err) {
+        settle();
+        toast("Full screen is not available on this device.");
+      }
+    });
+  }
+
 
   function readInitialDisplay() {
     var node = document.getElementById("initial-display");
