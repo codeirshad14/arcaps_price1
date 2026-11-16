@@ -35,6 +35,45 @@
 /* Product/price thumbnails sit better with a touch of breathing room. */
 #result_list td img { vertical-align: middle; }
 
+/*
+  The left menu must scroll when it is taller than the window.
+
+  The live server runs Jazzmin 3.0.1, built on AdminLTE 3. With
+  "sidebar_fixed" on, the sidebar is pinned to the full window height, but
+  the menu inside it is given no height of its own — AdminLTE expects its
+  OverlayScrollbars plugin to provide the scrolling, and Jazzmin does not
+  load it. So once the menu outgrew the window (more models, the "Install
+  the app" link, a laptop screen) its lower items were simply cut off.
+
+  The sidebar becomes a column exactly the window's height: the brand keeps
+  its size at the top, and the menu takes the rest and scrolls inside it.
+  Only AdminLTE 3's markup (.main-sidebar) is targeted; newer Jazzmin
+  (AdminLTE 4, .app-sidebar) already scrolls and is left alone.
+*/
+#jazzy-sidebar.main-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+#jazzy-sidebar.main-sidebar > .brand-link { flex: none; }
+
+#jazzy-sidebar.main-sidebar > .sidebar {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior: contain;     /* scrolling the menu never scrolls the page */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+#jazzy-sidebar.main-sidebar > .sidebar::-webkit-scrollbar { width: 6px; }
+#jazzy-sidebar.main-sidebar > .sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 3px;
+}
+
 /* Username next to the account icon, injected by admin_logout.js — Jazzmin
    otherwise only shows it as a hover tooltip. */
 .jazzy-username {

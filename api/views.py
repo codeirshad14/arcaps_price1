@@ -18,6 +18,7 @@ share one server with different settings.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -142,13 +143,17 @@ def _find_by_name(name: str, company: Company | None) -> list[Product]:
     nothing else — not "Blue Cap XL", not "Navy Blue Cap".
 
     The only leniency is case and the spacing between words, which never
-    change which product is meant.
+    change which product is meant — on BOTH sides. Tally names can carry a
+    stray double space ("BUCKET R  CAP"), and nobody types that; comparing
+    the words with any run of whitespace between them finds it. The pattern
+    is still anchored at both ends, so it matches the whole name or nothing.
     """
-    name = " ".join(name.split())
-    if not name:
+    words = name.split()
+    if not words:
         return []
+    pattern = r"^\s*" + r"\s+".join(re.escape(word) for word in words) + r"\s*$"
     queryset = (
-        Product.objects.filter(is_active=True, name__iexact=name)
+        Product.objects.filter(is_active=True, name__iregex=pattern)
         .select_related("category", "company")
     )
     if company is not None:

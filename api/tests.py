@@ -242,6 +242,18 @@ class NameSearchTests(ApiTestBase):
         data = self.lookup("%20blue%20%20cotton%20%20%20cap%20")
         self.assertEqual(data["tally_product"]["name"], "Blue Cotton Cap")
 
+    def test_stray_spaces_stored_in_the_name_are_forgiven(self):
+        """Tally sometimes stores "BUCKET R  CAP"; one space typed must find it."""
+        Product.objects.create(
+            company=self.company, barcode="7001", name="BUCKET R  CAP (BIG)",
+            retail_price=Decimal("50.00"), wholesale_price=Decimal("45.00"),
+        )
+        for typed in ["bucket%20r%20cap%20(big)", "BUCKET%20R%20%20CAP%20(BIG)"]:
+            with self.subTest(typed=typed):
+                self.assertEqual(self.lookup(typed)["tally_product"]["barcode"], "7001")
+        # Still exact: the same words without the bracket are not that product.
+        self.assertFalse(self.lookup("bucket%20r%20cap")["found"])
+
     def test_part_of_a_name_is_not_a_match(self):
         for typed in ["blue%20cap", "cotton", "blue%20cotton", "cap"]:
             with self.subTest(typed=typed):

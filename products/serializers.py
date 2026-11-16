@@ -28,6 +28,8 @@ from .models import Category, Company, DisplayProfile, Product
 # Decimal handling: it preserves trailing zeros and avoids float rounding on
 # the way to the screen.
 _MONEY = Decimal("0.01")
+_ZERO = Decimal("0")
+_HUNDRED = Decimal("100")
 
 
 def _money(value: Decimal | None) -> str | None:
@@ -583,15 +585,20 @@ class TallyProductSyncSerializer(serializers.Serializer):
     category = serializers.CharField(
         max_length=100, required=False, allow_null=True, allow_blank=True
     )
-    retail_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    # Limits as Decimal, not int: DRF compares them with the decimal it parsed
+    # and warns ("min_value should be a Decimal instance") on every start-up
+    # otherwise — noise in every manage.py command on the server.
+    retail_price = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=_ZERO
+    )
     given_disc = serializers.DecimalField(
-        max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False
+        max_digits=5, decimal_places=2, min_value=_ZERO, max_value=_HUNDRED, required=False
     )
     wholesale_price = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=0, required=False, allow_null=True
+        max_digits=12, decimal_places=2, min_value=_ZERO, required=False, allow_null=True
     )
     gst = serializers.DecimalField(
-        max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False
+        max_digits=5, decimal_places=2, min_value=_ZERO, max_value=_HUNDRED, required=False
     )
     hsn = serializers.CharField(
         max_length=8, required=False, allow_blank=True, allow_null=True
