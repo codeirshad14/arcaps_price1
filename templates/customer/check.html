@@ -146,7 +146,7 @@
             <p class="scan-sub">{{ prompt_subtitle }}</p>
           </div>
 
-          <div class="console-divider"><span>or enter the number</span></div>
+          <div class="console-divider"><span>or type the code or name</span></div>
 
           <form id="manual-form" class="manual-form" autocomplete="off">
             <div class="input-wrap">
@@ -156,15 +156,17 @@
                 <path d="M8 8v8M11 8v8M14 8v8M17 8v8"/>
               </svg>
               {% comment %}
-                Focused on arrival, and put back after every typed lookup by
-                customer.js. Typing a code is the only thing there is to do on
-                this page, and a customer checking several items should never
-                have to tap the box again between them.
+                On a computer customer.js focuses this on arrival and after
+                every lookup. On a phone it deliberately does not: focus is
+                what raises the on-screen keyboard, and a keyboard that keeps
+                popping up covers the price. There the customer taps the box
+                when they want to type, and it closes again after a lookup.
+                Hence no autofocus attribute either.
               {% endcomment %}
               <input id="manual-input" class="manual-input" type="text" inputmode="text"
-                     placeholder="Enter barcode or QR number"
-                     aria-label="Enter barcode or product code"
-                     autocomplete="off" spellcheck="false" autofocus>
+                     placeholder="Enter barcode or product name"
+                     aria-label="Enter a barcode, QR number or product name"
+                     autocomplete="off" spellcheck="false">
             </div>
             <button type="submit" class="btn btn--primary" id="manual-submit">
               {{ submit_label }}
@@ -232,7 +234,7 @@
             <h2 class="notfound-title">Product not found</h2>
             <p class="notfound-sub">Please ask a staff member for help.</p>
             <div class="notfound-code">
-              Code: <strong id="notfound-code"></strong>
+              Searched for: <strong id="notfound-code"></strong>
             </div>
           </div>
         </div>
@@ -290,6 +292,8 @@
 
 <script src="{% static 'js/price-fit.js' %}?v={{ asset_version }}"></script>
 <script src="{% static 'js/price-speech.js' %}?v={{ asset_version }}"></script>
+<script src="{% static 'js/fullscreen.js' %}?v={{ asset_version }}"></script>
+<script src="{% static 'js/scan-input.js' %}?v={{ asset_version }}"></script>
 <script src="{% static 'js/customer.js' %}?v={{ asset_version }}"></script>
 </body>
 </html>

@@ -216,6 +216,204 @@ class LookupTests(ApiTestBase):
         self.assertIn("barcode", keys)
 
 
+class NameSearchTests(ApiTestBase):
+    """A lookup matches the part number or the product name — exactly.
+
+    Only case and the spacing between words are forgiven. Anything partial or
+    similar is "not found": on a price checker a near match shows another
+    product's price, which is far worse than no answer.
+    """
+
+    def url(self, **params):
+        base = reverse("api:lookup")
+        return base + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+    def lookup(self, code, **params):
+        return self.client.get(self.url(code=code, source="manual", **params)).json()
+
+    def test_exact_name_finds_product_whatever_the_case(self):
+        for typed in ["Blue%20Cotton%20Cap", "blue%20cotton%20cap", "BLUE%20COTTON%20CAP"]:
+            with self.subTest(typed=typed):
+                data = self.lookup(typed)
+                self.assertTrue(data["found"])
+                self.assertEqual(data["tally_product"]["name"], "Blue Cotton Cap")
+
+    def test_extra_spaces_between_words_are_forgiven(self):
+        data = self.lookup("%20blue%20%20cotton%20%20%20cap%20")
+        self.assertEqual(data["tally_product"]["name"], "Blue Cotton Cap")
+
+    def test_part_of_a_name_is_not_a_match(self):
+        for typed in ["blue%20cap", "cotton", "blue%20cotton", "cap"]:
+            with self.subTest(typed=typed):
+                self.assertFalse(self.lookup(typed)["found"])
+
+    def test_longer_or_misspelt_name_is_not_a_match(self):
+        for typed in ["blue%20cotton%20cap%20xl", "blue%20coton%20cap"]:
+            with self.subTest(typed=typed):
+                self.assertFalse(self.lookup(typed)["found"])
+
+    def test_part_of_a_part_number_is_not_a_match(self):
+        for typed in ["134", "345", "QR-1345", "qr1345ar"]:
+            with self.subTest(typed=typed):
+                data = self.lookup(typed)
+                self.assertFalse(data["found"])
+                self.assertEqual(data["not_found"], [typed])
+
+    def test_exact_part_number_still_works_whatever_the_case(self):
+        data = self.lookup("qr-1345-ar")
+        self.assertEqual(data["tally_product"]["name"], "Blue Cotton Cap")
+
+    def test_part_number_wins_over_a_name(self):
+        """A product *named* like another's part number must not replace it."""
+        Product.objects.create(
+            company=self.company, barcode="9001", name="1346",
+            retail_price=Decimal("5.00"), wholesale_price=Decimal("5.00"),
+        )
+        data = self.lookup("1346")
+        self.assertNotIn("tally_products", data)
+        self.assertEqual(data["tally_product"]["name"], "Black Snapback")
+
+    def test_name_shared_by_two_products_shows_both(self):
+        Product.objects.create(
+            company=self.company, barcode="9002", name="Blue Cotton Cap",
+            retail_price=Decimal("1200.00"), wholesale_price=Decimal("900.00"),
+        )
+        data = self.lookup("blue%20cotton%20cap")
+        self.assertEqual({p["barcode"] for p in data["tally_products"]}, {"1345", "9002"})
+
+    def test_name_works_for_every_source(self):
+        for source in ["manual", "voice", "scanner"]:
+            with self.subTest(source=source):
+                data = self.client.get(self.url(code="black%20snapback", source=source)).json()
+                self.assertEqual(data["tally_product"]["name"], "Black Snapback")
+
+    def test_inactive_products_are_not_found_by_name(self):
+        self.assertFalse(self.lookup("retired")["found"])
+
+    def test_name_respects_the_station_company(self):
+        self.assertFalse(self.lookup("mpa%20steel%20bolt")["found"])
+        everyone = self.lookup("mpa%20steel%20bolt", station="all")
+        self.assertEqual(everyone["tally_product"]["name"], "MPA Steel Bolt")
+
+    def test_name_lookup_is_logged_against_what_was_typed(self):
+        self.lookup("blue%20cotton%20cap")
+        log = ScanLog.objects.latest("created_at")
+        self.assertEqual(log.code, "blue cotton cap")
+        self.assertTrue(log.found)
+        self.assertEqual(log.product, self.product)
+
+
+class CatalogTests(ApiTestBase):
+    """The internal catalogue API: staff only, partial search, filters."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("counter", password="x")
+        self.client.force_login(self.user)
+
+    def get(self, **params):
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        return self.client.get(reverse("api:catalog") + ("?" + query if query else ""))
+
+    def names(self, response):
+        return [p["name"] for p in response.json()["results"]]
+
+    def test_signed_out_is_refused(self):
+        self.client.logout()
+        self.assertIn(self.get().status_code, (401, 403))
+
+    def test_customer_portal_visit_is_refused(self):
+        """A QR visit is a session, never an account — so no catalogue."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from products.models import CustomerSession
+
+        self.client.logout()
+        visit = CustomerSession.objects.create(
+            name="Walk-in", mobile_number="9876543210",
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        session = self.client.session
+        session[CustomerSession.SESSION_KEY] = visit.pk
+        session.save()
+        self.assertIn(self.get().status_code, (401, 403))
+
+    def test_lists_active_products_of_the_station_company(self):
+        names = self.names(self.get())
+        self.assertEqual(names, ["Black Snapback", "Blue Cotton Cap"])   # name order
+        self.assertNotIn("Retired", names)          # inactive
+        self.assertNotIn("MPA Steel Bolt", names)   # another company
+
+    def test_search_is_partial_on_name_and_code(self):
+        self.assertEqual(self.names(self.get(q="cotton")), ["Blue Cotton Cap"])
+        self.assertEqual(self.names(self.get(q="134")), ["Black Snapback", "Blue Cotton Cap"])
+        self.assertEqual(self.names(self.get(q="qr-1345")), ["Blue Cotton Cap"])
+
+    def test_exact_match_is_listed_first(self):
+        # Alphabetically first, and it contains every word searched for...
+        Product.objects.create(
+            company=self.company, barcode="5001", name="A Blue Cotton Cap Gift Box",
+            retail_price=Decimal("10"), wholesale_price=Decimal("9"),
+        )
+        # ...but the product named exactly that comes first.
+        self.assertEqual(
+            self.names(self.get(q="blue%20cotton%20cap")),
+            ["Blue Cotton Cap", "A Blue Cotton Cap Gift Box"],
+        )
+
+    def test_filters(self):
+        self.assertEqual(self.names(self.get(discount="1")), ["Blue Cotton Cap"])
+        self.assertEqual(self.names(self.get(stock="in")), ["Blue Cotton Cap"])
+        self.assertEqual(self.names(self.get(stock="out")), ["Black Snapback"])
+        self.assertEqual(self.names(self.get(category=self.category.pk)), ["Blue Cotton Cap"])
+        self.assertEqual(self.names(self.get(category="none")), ["Black Snapback"])
+
+    def test_price_filter_and_sort_use_the_final_price(self):
+        # Blue Cotton Cap: 1000 less 20% = 800. Black Snapback: 650.
+        self.assertEqual(self.names(self.get(min_price="700")), ["Blue Cotton Cap"])
+        self.assertEqual(self.names(self.get(max_price="700")), ["Black Snapback"])
+        self.assertEqual(self.names(self.get(sort="-price")), ["Blue Cotton Cap", "Black Snapback"])
+
+    def test_category_facets_ignore_the_category_filter(self):
+        data = self.get(category=self.category.pk).json()
+        counts = {c["name"]: c["count"] for c in data["facets"]["categories"]}
+        self.assertEqual(counts, {"Caps": 1, "Uncategorised": 1})
+
+    def test_company_scope_and_company_facet(self):
+        locked = self.get().json()
+        self.assertNotIn("companies", locked["facets"])
+        everyone = self.get(station="all").json()
+        self.assertEqual(everyone["count"], 3)
+        self.assertEqual({c["slug"] for c in everyone["facets"]["companies"]},
+                         {"ar-caps", "mpa-traders"})
+        only_mpa = self.get(station="all", company="mpa-traders")
+        self.assertEqual(self.names(only_mpa), ["MPA Steel Bolt"])
+
+    def test_a_restricted_login_cannot_widen_its_company(self):
+        UserCompanyAccess.objects.create(user=self.user, company=self.company)
+        names = self.names(self.get(station="all", company="mpa-traders"))
+        self.assertNotIn("MPA Steel Bolt", names)
+
+    def test_staff_details_are_included(self):
+        product = self.get(q="1345").json()["results"][0]
+        for field in ("closing_stock", "unit", "gst", "hsn", "category", "alias", "prices"):
+            self.assertIn(field, product)
+        self.assertEqual(product["category"], "Caps")
+
+    def test_pages(self):
+        for n in range(30):
+            Product.objects.create(
+                company=self.company, barcode=f"P{n:03}", name=f"Page Item {n:03}",
+                retail_price=Decimal("10"), wholesale_price=Decimal("9"),
+            )
+        first = self.get(q="page").json()
+        self.assertEqual((first["count"], len(first["results"]), first["has_more"]), (30, 24, True))
+        second = self.get(q="page", page=2).json()
+        self.assertEqual((len(second["results"]), second["has_more"]), (6, False))
+        self.assertNotIn("facets", second)
+
+
 class MultiCompanyTests(ApiTestBase):
     """The clash this feature exists to solve.
 

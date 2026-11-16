@@ -129,7 +129,7 @@ class CustomerPortalSettings(models.Model):
     # The wording defaults, kept next to the fields they back so the two
     # cannot drift. Referenced by label() below.
     LABEL_DEFAULTS = {
-        "prompt_title": "Enter the product code",
+        "prompt_title": "Enter the product code or name",
         "prompt_subtitle": "It is printed on the tag",
         "submit_label": "Show Price",
         "finish_label": "Done",

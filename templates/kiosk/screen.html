@@ -5,6 +5,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="{{ theme.bg_start }}">
+  {% comment %}
+    iPhone has no full-screen API for a web page; added to the Home Screen
+    is its only full screen, and these tags are what make that copy open
+    without Safari's bars. The top bar's safe-area padding keeps it clear of
+    the status bar that black-translucent lets the page run underneath.
+  {% endcomment %}
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="{{ display.store_name }}">
+  <link rel="apple-touch-icon" href="{% url 'kiosk:pwa-icon' 180 %}">
   <title>{{ display.store_name }} — Price Checker</title>
 
   {# All styling is local: the showroom PC must look right with the internet down. #}
@@ -82,6 +93,20 @@
 
     <div class="corner-controls">
     {% if user.is_authenticated %}
+      {% comment %}
+        The internal catalogue — for the shop's own team, so only shown to
+        someone signed in. The customer portal has its own top bar and never
+        gets this. kiosk.js adds the station to the link.
+      {% endcomment %}
+      <a id="catalog-link" class="icon-button" href="{% url 'kiosk:catalog' %}"
+         title="Product catalogue" aria-label="Product catalogue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+      </a>
+
       {% comment %}
         Django 5 removed GET logout, so this must be a POST form — a plain
         link would return 405.
@@ -184,7 +209,7 @@
           </div>
 
           {# ---------- Secondary: manual entry ---------- #}
-          <div class="console-divider"><span>or enter the number</span></div>
+          <div class="console-divider"><span>or type the code or name</span></div>
 
           <form id="manual-form" class="manual-form" autocomplete="off">
             <div class="input-wrap">
@@ -199,12 +224,16 @@
                 lost if anything else holds focus. It used to be caught by a
                 second, offscreen input, which meant staff had to click here
                 before they could type.
+
+                No autofocus attribute: kiosk.js focuses it on load anyway,
+                and on a phone it first switches the on-screen keyboard off.
+                Autofocus could fire before that, and pop the keyboard up.
               {% endcomment %}
               <input id="manual-input" class="manual-input" type="text" inputmode="text"
-                     placeholder="Scan a tag, or enter the number"
-                     aria-label="Scan a tag, or enter a barcode or QR code number"
+                     placeholder="Scan a tag, or type a code or name"
+                     aria-label="Scan a tag, or type a barcode, QR number or product name"
                      autocomplete="off" autocorrect="off" autocapitalize="off"
-                     spellcheck="false" autofocus>
+                     spellcheck="false">
             </div>
             <button type="submit" class="btn btn--primary" id="manual-submit">
               Show Price
@@ -309,7 +338,7 @@
             <h2 class="notfound-title">Product not found</h2>
             <p class="notfound-sub">Please ask a staff member for help.</p>
             <div class="notfound-code">
-              Scanned code: <strong id="notfound-code"></strong>
+              Searched for: <strong id="notfound-code"></strong>
             </div>
           </div>
 
@@ -409,6 +438,8 @@
 
   <script src="{% static 'js/price-fit.js' %}?v={{ asset_version }}"></script>
   <script src="{% static 'js/price-speech.js' %}?v={{ asset_version }}"></script>
+  <script src="{% static 'js/fullscreen.js' %}?v={{ asset_version }}"></script>
+  <script src="{% static 'js/scan-input.js' %}?v={{ asset_version }}"></script>
   <script src="{% static 'js/kiosk.js' %}?v={{ asset_version }}"></script>
 </body>
 </html>

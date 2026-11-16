@@ -82,13 +82,13 @@
     return (symbol || "") + text;
   }
 
-  function toast(message, isError) {
+  function toast(message, isError, ms) {
     if (!el.toast) return;
     clearTimeout(state.toastTimer);
     el.toast.textContent = message;
     el.toast.classList.toggle("is-error", !!isError);
     show(el.toast);
-    state.toastTimer = setTimeout(function () { hide(el.toast); }, CONFIG.TOAST_MS);
+    state.toastTimer = setTimeout(function () { hide(el.toast); }, ms || CONFIG.TOAST_MS);
   }
 
   function flags() { return (state.display && state.display.fields) || {}; }
@@ -161,34 +161,65 @@
 
   /* ---------- 4. Manual entry ---------------------------------------------- */
 
-  /**
-   * Put the cursor back in the code box.
-   *
-   * Called only from the typed path, never after a voice lookup: focusing the
-   * box raises the on-screen keyboard, which is what someone typing wants and
-   * exactly what someone who just used the microphone does not.
-   */
+  /*
+    Phones (and tablets) are where this page is mostly used, and there focus
+    is not free: focusing the box raises the on-screen keyboard. Doing it on
+    arrival and after every lookup kept the keyboard up over the very price
+    the customer had just asked for. On a touch screen the customer taps the
+    box when they want to type, and nothing else ever focuses it.
+  */
+  var touchScreen = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+
+  /** Put the cursor in the code box — on a computer only. See above. */
   function focusCode() {
-    if (!el.manualInput) return;
+    if (!el.manualInput || touchScreen) return;
     el.manualInput.focus({ preventScroll: true });
   }
 
+  /*
+    Typed and scanned entry, through scan-input.js — the same code the kiosk
+    uses. A scan is looked up by itself, Enter or no Enter, even with nothing
+    focused on a phone or tablet, so nobody presses the button after scanning.
+  */
   function bindManualEntry() {
-    if (!el.manualForm) return;
-    el.manualForm.addEventListener("submit", function (event) {
-      event.preventDefault();
-      var typed = el.manualInput.value.trim();
-      if (!typed) {
-        toast("Type a barcode or product code first.");
-        focusCode();
-        return;
+    ScanInput.attach({
+      input: el.manualInput,
+      form: el.manualForm,
+      onSubmit: function (text, source) {
+        if (!text) {
+          toast("Type a barcode or product name first.");
+          focusCode();
+          return;
+        }
+        // A scan is looked up exactly as read; typed text may hold several.
+        submitCode(source === "scanner" ? text : splitQueries(text).join(","), source);
+        if (touchScreen) {
+          // Put the keyboard away so the result is not hidden behind it.
+          el.manualInput.blur();
+        } else {
+          // The button took focus on click; give it back for the next code.
+          focusCode();
+        }
       }
-      el.manualInput.value = "";
-      submitCode(typed, "manual");
-      // Tapping the button moves focus to it and drops the keyboard, so the
-      // box has to be reclaimed even though the customer was just typing in it.
-      focusCode();
     });
+  }
+
+  /**
+   * Split what was typed into separate lookups. Same rule as kiosk.js:
+   * commas always separate, and spaces only between plain numbers — so
+   * "1345 1346" is two codes while "blue cap" stays one product name.
+   */
+  function splitQueries(text) {
+    var out = [];
+    var parts = text.split(",");
+    for (var i = 0; i < parts.length; i++) {
+      var words = parts[i].trim().split(/\s+/).filter(Boolean);
+      if (!words.length) continue;
+      var allNumbers = words.every(function (word) { return /^\d+$/.test(word); });
+      if (allNumbers) out.push.apply(out, words);
+      else out.push(words.join(" "));
+    }
+    return out;
   }
 
   /* ---------- 5. Spoken-code parser ---------------------------------------- */
@@ -431,8 +462,13 @@
         if (data.display) state.display = data.display;
         if (data.customer_session) resyncRemaining(data.customer_session.seconds_remaining);
 
-        if (data.tally_product) {
-          renderResult(data.tally_product);
+        // Several codes, or one name that two products share exactly, can
+        // bring back more than one.
+        var products = data.tally_products ||
+                       (data.tally_product ? [data.tally_product] : []);
+
+        if (products.length) {
+          renderResults(products);
         } else {
           renderNotFound((data.not_found && data.not_found[0]) || data.code || code);
         }
@@ -594,26 +630,46 @@
     setText(code, product.barcode ? "Code: " + product.barcode : "");
   }
 
-  function renderResult(product) {
+  function renderResults(products) {
     el.resultStage.textContent = "";
-    var card = el.cardTemplate.content.firstElementChild.cloneNode(true);
-    fillCard(card, product);
-    el.resultStage.appendChild(card);
+    for (var i = 0; i < products.length; i++) {
+      var card = el.cardTemplate.content.firstElementChild.cloneNode(true);
+      fillCard(card, products[i]);
+      el.resultStage.appendChild(card);
+    }
     // The kiosk stylesheet sizes cards off this, so it has to be set here
-    // too — without it the single-card layout rules never match.
-    el.resultStage.setAttribute("data-count", "1");
+    // too — without it the card layout rules never match.
+    el.resultStage.setAttribute("data-count", String(products.length));
+    // A phone scrolls the panel around the cards; a new search should start
+    // at its top, not wherever the last list was left.
+    var panel = el.resultStage.closest(".stage-right");
+    if (panel) panel.scrollTop = 0;
     switchView("result");
+    replayEntrance(el.views.result);
     // After the view is visible, so each price has a resolved font to be
     // measured against. See price-fit.js.
     PriceFit.fit(el.resultStage);
     // Same spoken price the kiosk gives, honouring the same station setting.
     // There is no wake word here, so no listening to suspend.
-    PriceSpeech.announce([product]);
+    PriceSpeech.announce(products);
   }
 
   function renderNotFound(code) {
     setText(el.notfoundCode, code || "—");
     switchView("notfound");
+    replayEntrance(el.views.notfound);
+  }
+
+  /**
+   * Play the mobile slide-in again for every Show Price, not just the first.
+   * Same as kiosk.js: off, let the browser notice, on again. The stylesheet
+   * decides it is mobile only, so on a computer this does nothing.
+   */
+  function replayEntrance(view) {
+    if (!view) return;
+    view.classList.remove("is-entering");
+    void view.offsetWidth;          // the browser must see it gone first
+    view.classList.add("is-entering");
   }
 
   /* ---------- 7b. Spoken price and screen controls ------------------------- */
@@ -636,28 +692,38 @@
     });
   }
 
-  function fullscreenSupported() {
-    var d = document.documentElement;
-    return !!(d.requestFullscreen || d.webkitRequestFullscreen);
-  }
+  /*
+    Browser differences live in fullscreen.js, shared with the kiosk.
 
+    On iPhone the button simply stays hidden. Unlike the kiosk there is no
+    Home Screen route to offer: an app added there keeps its own cookies, so
+    it would open on the closing page instead of this customer's visit.
+  */
   function bindFullscreen() {
-    if (!el.fullscreenToggle) return;
-    if (!fullscreenSupported()) return;      // iOS Safari on iPhone: no API
-    show(el.fullscreenToggle);
+    var button = el.fullscreenToggle;
+    if (!button) return;
+    if (!FullScreen.isAvailable() || FullScreen.isStandalone()) return;
 
-    el.fullscreenToggle.addEventListener("click", function () {
-      var d = document.documentElement;
-      try {
-        if (document.fullscreenElement || document.webkitFullscreenElement) {
-          (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-        } else {
-          (d.requestFullscreen || d.webkitRequestFullscreen).call(d);
-        }
-      } catch (err) {
-        toast("Full screen is not available on this device.");
-      }
+    function reflect(active) {
+      var label = active ? "Exit full screen" : "Full screen";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.classList.toggle("is-active", active);
+    }
+
+    function blocked() {
+      toast("Full screen was blocked by the browser.", true);
+    }
+
+    FullScreen.onChange(reflect);
+    FullScreen.onError(blocked);
+
+    button.addEventListener("click", function () {
+      FullScreen.toggle().catch(blocked);
     });
+
+    reflect(FullScreen.isActive());
+    show(button);
   }
 
   /* ---------- 8. Boot -------------------------------------------------------- */
@@ -681,10 +747,10 @@
     startSessionCountdown();
     setInterval(pollStatus, CONFIG.STATUS_POLL_MS);
 
-    // The markup carries `autofocus`, but that only fires on a fresh parse and
-    // some mobile browsers ignore it outright. Asking again here covers a
-    // plain reload, and `pageshow` covers coming back to the page from the
-    // browser's cache, where nothing is parsed and autofocus never runs.
+    // Ready to type on arrival — on a computer. On a phone focusCode() does
+    // nothing, so the page opens on the prompt, not behind a keyboard.
+    // `pageshow` covers coming back to the page from the browser's cache,
+    // where nothing is re-run.
     focusCode();
     window.addEventListener("pageshow", function (event) {
       focusCode();

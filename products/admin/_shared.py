@@ -6,17 +6,23 @@ from django.utils.html import format_html
 from django.utils.safestring import SafeString
 from import_export.widgets import ForeignKeyWidget
 
+from .. import images
+
 
 def image_tag(image, height: int) -> SafeString:
     """Render an uploaded image at a fixed height, or a dash when absent.
 
     Guards against a database row pointing at a file that no longer exists on
     disk — common after copying a database between machines.
+
+    Shows a resized copy: the product list draws thirty of these at once, and
+    at full size that page alone was tens of megabytes.
     """
     if not image:
         return format_html('<span style="color:#999;">—</span>')
+    size = images.THUMBNAIL if height <= 100 else images.PREVIEW
     try:
-        url = image.url
+        url = images.resized_url(image, size)
     except ValueError:  # pragma: no cover - only when storage is misconfigured
         return format_html('<span style="color:#c00;">missing</span>')
     return format_html(

@@ -28,23 +28,16 @@
   /* ---------- 1. Configuration and state -------------------------------- */
 
   var CONFIG = {
-    // A scan ends with Enter. For scanners not configured to send one, flush
-    // the buffer after this much keystroke silence.
-    FLUSH_IDLE_MS: 120,
-    // Scanners type far faster than people. If the largest gap between two
-    // keystrokes exceeds this, the input came from a human at the keyboard.
-    MACHINE_MAX_GAP_MS: 60,
-    // A burst with no terminating Enter is only submitted on its own once it
-    // is this long. A quick typist can land two characters inside
-    // MACHINE_MAX_GAP_MS by accident, and submitting their half-typed code
-    // out from under them is far worse than waiting for Enter; no real
-    // product code is shorter than this anyway.
-    MIN_AUTO_SUBMIT_LEN: 4,
+    // How a scan is told from typing (and its timings) lives in
+    // scan-input.js, shared with the customer page.
+    //
     // Ignore the same code submitted twice in quick succession — scanners
     // sometimes fire twice off one trigger pull.
     DUPLICATE_WINDOW_MS: 500,
     REFOCUS_INTERVAL_MS: 800,
     TOAST_MS: 3200,
+    // Instructions (the iPhone Home Screen route) need time to be read.
+    HINT_TOAST_MS: 9000,
     // Wake-word listening restarts constantly; back off if it keeps failing
     // so a denied microphone cannot spin the CPU.
     WAKE_RESTART_MS: 400,
@@ -85,6 +78,8 @@
     toastTimer: null,
     inFlight: null,       // AbortController for the current lookup
     items: [],            // products currently on screen (multi-scan)
+    // True while a full-screen transition animates; see keepCodeFocus().
+    fullscreenPending: false,
     voice: {
       recognition: null,
       supported: false,
@@ -99,7 +94,6 @@
     }
   };
 
-  var scanner = { lastKeyAt: 0, maxGap: 0, flushTimer: null };
 
   /* ---------- 2. Element handles ---------------------------------------- */
 
@@ -139,6 +133,7 @@
     scanNextNf: $("scan-next-nf"),
 
     muteToggle: $("mute-toggle"),
+    catalogLink: $("catalog-link"),
     stationButton: $("station-button"),
     stationModal: $("station-modal"),
     stationList: $("station-list"),
@@ -189,13 +184,13 @@
     return String(parseFloat(n.toFixed(3)));
   }
 
-  function toast(message, isError) {
+  function toast(message, isError, ms) {
     if (!el.toast) return;
     clearTimeout(state.toastTimer);
     el.toast.textContent = message;
     el.toast.classList.toggle("is-error", !!isError);
     show(el.toast);
-    state.toastTimer = setTimeout(function () { hide(el.toast); }, CONFIG.TOAST_MS);
+    state.toastTimer = setTimeout(function () { hide(el.toast); }, ms || CONFIG.TOAST_MS);
   }
 
   /* ---------- 4. Station selection --------------------------------------- */
@@ -268,6 +263,13 @@
 
   /* ---------- 6. Focus management ---------------------------------------- */
 
+  /*
+    Phones and tablets are handled differently from here on: see section 6b.
+    Desktops — the showroom PCs with a USB scanner — keep exactly the
+    behaviour they always had.
+  */
+  var touchScreen = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+
   /**
    * Keep the cursor in the code box.
    *
@@ -275,17 +277,12 @@
    * lost whenever anything else holds focus — which is why this is enforced
    * rather than merely set once at startup. The station dialog is the single
    * exception: fighting it for focus would make its buttons unusable.
-  
+   */
   function keepCodeFocus() {
     if (!el.manualInput) return;
-    if (el.stationModal && !el.stationModal.hidden) return;
-    if (document.activeElement !== el.manualInput) {
-      el.manualInput.focus({ preventScroll: true });
-    }
-  }
- */
-  function keepCodeFocus() {
-    if (!el.manualInput) return;
+    // On a touch screen focus is what raises the keyboard, so only the
+    // person's own tap on the box may give it focus. See section 6b.
+    if (touchScreen) return;
     if (el.stationModal && !el.stationModal.hidden) return;
     // macOS enters fullscreen with a native ~1s window animation. Stealing
     // focus while that is in flight makes the browser abandon it, so the
@@ -296,10 +293,6 @@
       el.manualInput.focus({ preventScroll: true });
     }
   }
-
-
-
-
 
   function bindFocusGuards() {
     // Anything that takes focus — pressing a button, a stray click on the
@@ -321,110 +314,77 @@
     setInterval(keepCodeFocus, CONFIG.REFOCUS_INTERVAL_MS);
   }
 
-  /* ---------- 7. Scanner input handling ---------------------------------- */
+  /* ---------- 6b. Phones and tablets: no keyboard unless asked for -------- */
 
   /*
-    The scanner and the keyboard share one visible box.
+    On a desktop the guard above keeps the cursor in the code box at all
+    times. On a touch screen that same focus raised the on-screen keyboard —
+    on arrival, after every lookup, every time the guard fired — and it
+    covered the price the customer was trying to read.
 
-    There used to be a second, offscreen input that the scanner typed into, so
-    a scan could never be lost to whatever else held focus. The cost was that
-    the visible box never showed a cursor and staff had to click it before
-    they could type. One permanently focused box gives both.
-
-    Telling the two apart is a matter of speed: a scanner emits its characters
-    far faster than fingers can, so the largest gap between keystrokes in a
-    burst decides which source the lookup is logged under.
+    So on a touch screen nothing focuses the box except a tap on it. The
+    keyboard appears when someone taps to type, and goes away after the
+    lookup so the result can slide into view. A Bluetooth scanner still works
+    with nothing focused: scan-input.js catches its keys on the page.
   */
-  function bindScanner() {
-    el.manualInput.addEventListener("keydown", function (event) {
-      var now = Date.now();
 
-      // Enter is the scanner's terminator and the person's "go". Both reach
-      // the form's submit handler, so the only job here is to stop the
-      // idle flush from firing underneath it.
-      if (event.key === "Enter") {
-        clearTimeout(scanner.flushTimer);
-        return;
-      }
+  /** After a typed lookup on a touch screen: put the keyboard away. */
+  function closeKeyboard() {
+    if (touchScreen && document.activeElement === el.manualInput) {
+      el.manualInput.blur();
+    }
+  }
 
-      // A long pause is evidence of a person, so it is recorded rather than
-      // treated as the start of a fresh burst. Resetting here instead — as an
-      // earlier version did — meant someone typing slowly looked machine-fast
-      // on every single keystroke, and had their half-finished code submitted.
-      if (scanner.lastKeyAt) {
-        scanner.maxGap = Math.max(scanner.maxGap, now - scanner.lastKeyAt);
-      }
-      scanner.lastKeyAt = now;
+  /* ---------- 7. Scanner and typed entry --------------------------------- */
 
-      clearTimeout(scanner.flushTimer);
-      scanner.flushTimer = setTimeout(flushIfMachineTyped, CONFIG.FLUSH_IDLE_MS);
+  /*
+    The scanner and the keyboard share one visible box, and a scan is looked
+    up by itself — Enter or no Enter, focused or not — so nobody ever presses
+    Show Price after scanning. How a scan is told from typing lives in
+    scan-input.js, shared with the customer page.
+  */
+  function bindEntry() {
+    ScanInput.attach({
+      input: el.manualInput,
+      form: el.manualForm,
+      // The station picker needs the keyboard for itself while it is open.
+      isPaused: function () { return el.stationModal && !el.stationModal.hidden; },
+      onSubmit: submitEntry
     });
   }
 
-  /** True when this burst arrived faster than a person could have typed it. */
-  function looksMachineTyped(code) {
-    return code.length >= 2 && scanner.maxGap <= CONFIG.MACHINE_MAX_GAP_MS;
-  }
+  function submitEntry(text, source) {
+    if (!text) {
+      toast("Scan a tag, or type a code or product name first.");
+      keepCodeFocus();
+      return;
+    }
 
-  /** Start measuring again, once a burst has been dealt with. */
-  function resetBurst() {
-    scanner.maxGap = 0;
-    scanner.lastKeyAt = 0;
+    // A scan is looked up exactly as the scanner read it. Typed text may
+    // hold several codes: "1345, 1346" compares two products in one go.
+    submitCodes(source === "scanner" ? [text] : splitQueries(text), source);
+    // The box has to stay ready for the next scan, but on a phone the
+    // keyboard must go, or it hides the price that is about to appear.
+    closeKeyboard();
+    keepCodeFocus();
   }
 
   /**
-   * Submit a scan that arrived without a terminating Enter.
+   * Split what was typed into separate lookups.
    *
-   * Scanners that are not configured to send one simply stop typing, so the
-   * only evidence left is the silence afterwards plus the machine-speed burst
-   * before it. A person pausing mid-code must never trigger this, which is
-   * what the speed and length tests are protecting: their unfinished code
-   * stays in the box for them to carry on with.
+   * Commas always separate: "1345, blue cap" is two. Spaces separate only
+   * when every word is a number, so "1345 1346" still compares two products
+   * while "blue cap" stays one product name instead of becoming two.
    */
-  function flushIfMachineTyped() {
-    var code = el.manualInput.value.trim();
-    if (code.length < CONFIG.MIN_AUTO_SUBMIT_LEN) return;
-    if (!looksMachineTyped(code)) return;
-
-    el.manualInput.value = "";
-    resetBurst();
-    submitCodes([code], "scanner");
-  }
-
-  /* ---------- 8. Manual entry -------------------------------------------- */
-
-  function bindManualEntry() {
-    el.manualForm.addEventListener("submit", function (event) {
-      event.preventDefault();
-      clearTimeout(scanner.flushTimer);
-
-      var typed = el.manualInput.value.trim();
-      if (!typed) {
-        toast("Scan a tag, or type a barcode or QR number first.");
-        keepCodeFocus();
-        return;
-      }
-
-      // A scanner's Enter and a person's Enter both arrive here; the burst
-      // speed is the only thing separating them for the scan log.
-      var source = looksMachineTyped(typed) ? "scanner" : "manual";
-
-      el.manualInput.value = "";
-      resetBurst();
-      // Allow "1345, 1346" to compare two products in one go.
-      submitCodes(splitCodes(typed), source);
-      // Never blur: the box has to stay ready for the next scan.
-      keepCodeFocus();
-    });
-  }
-
-  /** Split a typed string on commas/spaces into separate codes. */
-  function splitCodes(text) {
-    var parts = text.split(/[,\s]+/);
+  function splitQueries(text) {
     var out = [];
+    var parts = text.split(",");
     for (var i = 0; i < parts.length; i++) {
-      var part = parts[i].trim();
-      if (part) out.push(part);
+      var words = parts[i].trim().split(/\s+/).filter(Boolean);
+      if (!words.length) continue;
+      var allNumbers = words.every(function (word) { return /^\d+$/.test(word); });
+      if (allNumbers) out.push.apply(out, words);
+      else out.push(words.join(" "));
     }
     return out;
   }
@@ -850,7 +810,10 @@
 
     recognition.onstart = function () {
       state.voice.listening = true;
-      state.voice.wakeFailures = 0;
+      // The failure count is NOT reset here. Starting is not succeeding: with
+      // the speech service unreachable, every restart starts fine and then
+      // fails, so resetting on start kept the count at 1 forever and the
+      // microphone restarting twice a second without end. onresult resets it.
       // There must always be a way to switch the microphone off while it is
       // on, not only in wake-word mode.
       updateStopButton();
@@ -871,6 +834,8 @@
     };
 
     recognition.onresult = function (event) {
+      // Something was actually heard, so the speech service is working.
+      state.voice.wakeFailures = 0;
       if (resolved) return;
 
       var interim = "";
@@ -1626,6 +1591,10 @@
       el.resultStage.appendChild(card);
     }
     el.resultStage.setAttribute("data-count", String(products.length));
+    // A phone scrolls the panel around the cards; each new result should
+    // slide in from its top, not wherever the last list was left.
+    var panel = el.resultStage.closest(".stage-right");
+    if (panel) panel.scrollTop = 0;
 
     if (maxItems() > 1) show(el.multiHint); else hide(el.multiHint);
 
@@ -1634,6 +1603,7 @@
     }
 
     switchView("result");
+    replayEntrance(el.views.result);
     // After the view is visible, so the prices have a resolved font to be
     // measured against — see PriceFit.fit().
     PriceFit.fit(el.resultStage);
@@ -1645,7 +1615,24 @@
     state.items = [];
     setText(el.notfoundCode, code || "—");
     switchView("notfound");
+    replayEntrance(el.views.notfound);
     startCountdown(el.countdownFillNf, el.countdownTextNf);
+  }
+
+  /**
+   * Play the mobile slide-in again, for this result as well as the first.
+   *
+   * An animation runs once, when its rule first applies; a second search
+   * while a result is showing changes nothing a stylesheet can see. Taking
+   * the class off, letting the browser notice, and putting it back restarts
+   * it. Whether there is a slide at all — mobile only — is the stylesheet's
+   * call (see view-slide-up in kiosk.css), so on a desktop this does nothing.
+   */
+  function replayEntrance(view) {
+    if (!view) return;
+    view.classList.remove("is-entering");
+    void view.offsetWidth;          // the browser must see it gone first
+    view.classList.add("is-entering");
   }
 
   /* ---------- 13. Countdown and view switching ---------------------------- */
@@ -1810,73 +1797,80 @@
     // (logo, welcome text) for the new station.
     window.location.href = "/?station=" + encodeURIComponent(slug);
   }
-/*
+
+  /*
+    The browser differences — Apple's above all — live in fullscreen.js,
+    shared with the customer portal. What is kiosk-specific is standing the
+    focus guard down while the transition animates, because macOS abandons a
+    full-screen transition the moment focus moves during it.
+  */
   function bindFullscreen() {
-    el.fullscreenToggle.addEventListener("click", function () {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(function () {
-          toast("Fullscreen was blocked by the browser.");
+    var button = el.fullscreenToggle;
+    if (!button) return;
+
+    // Opened from the Home Screen: already as full screen as a page gets.
+    if (FullScreen.isStandalone()) { hide(button); return; }
+
+    if (!FullScreen.isAvailable()) {
+      // iPhone. It does have a route to full screen, just not one a page can
+      // take by itself — so the button explains it rather than vanishing and
+      // leaving staff wondering where it went.
+      if (FullScreen.canAddToHomeScreen()) {
+        button.addEventListener("click", function () {
+          toast(FullScreen.HOME_SCREEN_HINT, false, CONFIG.HINT_TOAST_MS);
         });
       } else {
-        document.exitFullscreen();
+        hide(button);
       }
-      setTimeout(keepCodeFocus, 50);
-    });
-  }
-
-
-
-
-   ---------- 15. Boot ---------------------------------------------------- */
-  /* iPhone has no Fullscreen API for ordinary elements at all, and Safari
-     before 16.4 only had the webkit-prefixed names. Probe rather than assume,
-     and hide the button outright when there is nothing behind it. */
-  function fullscreenSupported() {
-    var d = document.documentElement;
-    return !!(d.requestFullscreen || d.webkitRequestFullscreen);
-  }
-
-  function bindFullscreen() {
-    if (!el.fullscreenToggle) return;
-    if (!fullscreenSupported()) { hide(el.fullscreenToggle); return; }
-
-    // Held while the transition is animating, so the focus guard stands down.
-    // Cleared by fullscreenchange, with a timer as a backstop in case the
-    // request is refused and no event ever arrives.
-    function settle() {
-      state.fullscreenPending = false;
-      setTimeout(keepCodeFocus, 50);
+      return;
     }
-    document.addEventListener("fullscreenchange", settle);
-    document.addEventListener("webkitfullscreenchange", settle);
 
-    el.fullscreenToggle.addEventListener("click", function () {
-      var d = document.documentElement;
-      var active = document.fullscreenElement || document.webkitFullscreenElement;
+    var settleTimer = null;
 
-      state.fullscreenPending = true;
-      setTimeout(settle, 1500);
+    function settleAfter(ms) {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(function () {
+        state.fullscreenPending = false;
+        keepCodeFocus();
+      }, ms);
+    }
 
-      try {
-        if (active) {
-          (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-        } else {
-          // May return a promise or nothing, depending on the browser.
-          var result = (d.requestFullscreen || d.webkitRequestFullscreen).call(d);
-          if (result && result.catch) {
-            result.catch(function () {
-              settle();
-              toast("Fullscreen was blocked by the browser.");
-            });
-          }
-        }
-      } catch (err) {
-        settle();
-        toast("Full screen is not available on this device.");
-      }
+    function blocked() {
+      settleAfter(0);
+      toast("Full screen was blocked by the browser.", true);
+    }
+
+    function reflect(active) {
+      var label = active ? "Exit full screen" : "Full screen";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.classList.toggle("is-active", active);
+    }
+
+    FullScreen.onChange(function (active) {
+      reflect(active);
+      // The event can land before macOS has finished animating, so the
+      // guard stays down a little longer rather than resuming at once.
+      settleAfter(FullScreen.SETTLE_MS);
     });
+    FullScreen.onError(blocked);
+
+    // Pressing the button must not pull the cursor out of the code box.
+    // Without this the box blurs on press, the guard snatches focus back,
+    // and that lands right as macOS starts its transition.
+    button.addEventListener("mousedown", function (event) { event.preventDefault(); });
+
+    button.addEventListener("click", function () {
+      state.fullscreenPending = true;
+      // Backstop for a refusal that never fires an event at all.
+      settleAfter(2500);
+      FullScreen.toggle().catch(blocked);
+    });
+
+    reflect(FullScreen.isActive());
   }
 
+  /* ---------- 15. Boot ---------------------------------------------------- */
 
   function readInitialDisplay() {
     var node = document.getElementById("initial-display");
@@ -1906,9 +1900,13 @@
       }
     }
 
+    // The catalogue opens on this system's station, so it shows the same
+    // company's products the counter does. The station may only be known
+    // here (remembered on this machine), not in the page's own address.
+    if (el.catalogLink) el.catalogLink.href = withStation("/catalog/");
+
     bindFocusGuards();
-    bindScanner();
-    bindManualEntry();
+    bindEntry();
     bindStationPicker();
     bindFullscreen();
     bindSpeech();

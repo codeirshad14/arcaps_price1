@@ -18,13 +18,25 @@ share one server with different settings.
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.contrib.auth import authenticate, login, logout
-from django.db.models import Q
+from django.db.models import (
+    Case,
+    Count,
+    DecimalField,
+    ExpressionWrapper,
+    F,
+    IntegerField,
+    Q,
+    Value,
+    When,
+)
 from django.utils import timezone
 from rest_framework import filters, generics, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
@@ -42,6 +54,7 @@ from products.models import (
     resolve_company,
 )
 from products.serializers import (
+    CatalogProductSerializer,
     ProductCrudSerializer,
     StationSerializer,
     TallyProductSerializer,
@@ -119,6 +132,31 @@ def _find_products(code: str, company: Company | None) -> list[Product]:
     return list(queryset.order_by("company__name", "-barcode"))
 
 
+def _find_by_name(name: str, company: Company | None) -> list[Product]:
+    """Active products whose name is exactly ``name``, ignoring case.
+
+    Exact on purpose, and never "contains" or "similar". This is a price
+    checker: a near match puts a different product's price on screen, and a
+    customer reading it has no way to know it is not the one they asked
+    about. Typing "blue cap" must find the product called "Blue Cap" and
+    nothing else — not "Blue Cap XL", not "Navy Blue Cap".
+
+    The only leniency is case and the spacing between words, which never
+    change which product is meant.
+    """
+    name = " ".join(name.split())
+    if not name:
+        return []
+    queryset = (
+        Product.objects.filter(is_active=True, name__iexact=name)
+        .select_related("category", "company")
+    )
+    if company is not None:
+        queryset = queryset.filter(company=company)
+    # Same order as a code lookup, so the same search always renders the same.
+    return list(queryset.order_by("company__name", "-barcode"))
+
+
 def _requested_codes(request: Request) -> list[str]:
     """Collect codes from ``?code=`` — repeated, comma-separated, or both.
 
@@ -147,10 +185,16 @@ def lookup(request: Request) -> Response:
     so admin changes take effect on the very next scan.
 
     Query params:
-        code         required; repeat or comma-separate for several products
+        code         required; repeat or comma-separate for several products.
+                     An exact product name works too — see below
         station      which display profile (and price list) to use
         source       scanner (default) | voice | manual, recorded in ScanLog
         omit_hidden  "1" to drop fields switched off in the admin entirely
+
+    Each code is matched against the part number (barcode) and alias first,
+    then against the product name. Every match is exact, ignoring only case:
+    a partial or similar match would show another product's price, which on
+    a price checker is worse than "not found". See ``_find_by_name``.
 
     Response shape is unchanged for the single-code case: ``tally_product`` is
     the object. A multi-code request additionally returns ``tally_products``.
@@ -189,7 +233,9 @@ def lookup(request: Request) -> Response:
     logs: list[ScanLog] = []
 
     for code in codes:
-        matches = _find_products(code, company)
+        # The part number wins: a product whose *name* happens to read like
+        # another product's code must not take its place.
+        matches = _find_products(code, company) or _find_by_name(code, company)
 
         logs.append(
             ScanLog(
@@ -266,6 +312,176 @@ def _visible_field_names(flags: dict[str, Any]) -> set[str]:
     if flags.get("availability"):
         keep.update({"availability", "closing_stock"})
     return keep
+
+
+# ---------------------------------------------------------------------------
+# 1b. Catalogue (internal)
+# ---------------------------------------------------------------------------
+
+CATALOG_PAGE_SIZE = 24
+
+# The retail price a customer pays — discount off, GST on — worked out in the
+# database, so the catalogue can filter and sort by it. Product computes the
+# same figure in Python (retail_final_price), rounding at each step; this
+# skips the rounding, which only matters at the last paisa of a range.
+_FINAL_PRICE = ExpressionWrapper(
+    F("retail_price") * (Value(100) - F("given_disc")) * (Value(100) + F("gst")) / Value(10000),
+    output_field=DecimalField(max_digits=20, decimal_places=4),
+)
+
+_CATALOG_SORTS = {
+    "name": ["name"],
+    "-name": ["-name"],
+    "price": ["final_price", "name"],
+    "-price": ["-final_price", "name"],
+    "stock": ["closing_stock", "name"],
+    "-stock": ["-closing_stock", "name"],
+    "new": ["-created_at", "name"],
+}
+
+
+def _decimal_param(value: str | None) -> Decimal | None:
+    try:
+        return Decimal(value) if value not in (None, "") else None
+    except InvalidOperation:
+        return None
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def catalog(request: Request) -> Response:
+    """Browse the catalogue: the internal team's catalogue screen.
+
+    Signed-in users only. Customers never have an account — the QR portal
+    keeps its visits in its own session — so this is closed to them however
+    they arrive.
+
+    Unlike the price lookup, search here is partial on purpose: this is for
+    browsing ("show me every cap"), by staff who can see what they are
+    looking at, not a customer reading a single price off a screen. An exact
+    match on code or name is still listed first.
+
+    Query params (all optional):
+        q          words matched against name, part number and alias
+        category   category id, or "none" for products without one
+        company    company slug — only on an all-companies station
+        stock      "in" | "out"
+        discount   "1" for discounted products only
+        min_price  final retail price, incl. discount and GST
+        max_price
+        sort       name | -name | price | -price | stock | -stock | new
+        page       1-based; CATALOG_PAGE_SIZE per page
+        station    as everywhere: decides the company scope
+
+    Page 1 also carries ``facets`` — the categories (and companies) with how
+    many products each has under the current search — to draw the filters.
+    """
+    profile, company = _resolve_scope(request)
+    params = request.query_params
+
+    products = Product.objects.filter(is_active=True).select_related("category", "company")
+    if company is not None:
+        products = products.filter(company=company)
+    products = products.annotate(final_price=_FINAL_PRICE)
+
+    query = " ".join(params.get("q", "").split())
+    for word in query.split():
+        products = products.filter(
+            Q(name__icontains=word) | Q(barcode__icontains=word) | Q(alias__icontains=word)
+        )
+
+    # A station locked to one company already decided this; only an
+    # all-companies screen may narrow it.
+    company_slug = params.get("company")
+    if company is None and company_slug:
+        products = products.filter(company__slug=company_slug)
+
+    stock = params.get("stock")
+    if stock == "in":
+        products = products.filter(closing_stock__gt=0)
+    elif stock == "out":
+        products = products.filter(closing_stock__lte=0)
+
+    if params.get("discount") == "1":
+        products = products.filter(given_disc__gt=0)
+
+    low, high = _decimal_param(params.get("min_price")), _decimal_param(params.get("max_price"))
+    if low is not None:
+        products = products.filter(final_price__gte=low)
+    if high is not None:
+        products = products.filter(final_price__lte=high)
+
+    # Counted before the category filter, so the list keeps offering every
+    # category the search could switch to, not just the one already picked.
+    before_category = products
+
+    category = params.get("category")
+    if category == "none":
+        products = products.filter(category__isnull=True)
+    elif category and category.isdigit():
+        products = products.filter(category_id=int(category))
+
+    ordering = list(_CATALOG_SORTS.get(params.get("sort", "name"), _CATALOG_SORTS["name"]))
+    if query:
+        products = products.annotate(
+            _exact=Case(
+                When(
+                    Q(barcode__iexact=query) | Q(alias__iexact=query) | Q(name__iexact=query),
+                    then=Value(0),
+                ),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+        ordering.insert(0, "_exact")
+    products = products.order_by(*ordering, "pk")
+
+    try:
+        page = max(1, int(params.get("page", 1)))
+    except ValueError:
+        page = 1
+    total = products.count()
+    start = (page - 1) * CATALOG_PAGE_SIZE
+    items = products[start:start + CATALOG_PAGE_SIZE]
+
+    payload: dict[str, Any] = {
+        "count": total,
+        "page": page,
+        "has_more": start + CATALOG_PAGE_SIZE < total,
+        "currency_symbol": profile.currency_symbol,
+        "results": CatalogProductSerializer(items, many=True, context={"request": request}).data,
+    }
+
+    if page == 1:
+        categories = (
+            before_category.values("category_id", "category__name")
+            .annotate(n=Count("id"))
+            .order_by("category__name")
+        )
+        facets: dict[str, Any] = {
+            "categories": [
+                {
+                    "id": row["category_id"] if row["category_id"] is not None else "none",
+                    "name": row["category__name"] or "Uncategorised",
+                    "count": row["n"],
+                }
+                for row in categories
+            ],
+        }
+        if company is None:
+            companies = (
+                Product.objects.filter(is_active=True)
+                .values("company__slug", "company__name")
+                .annotate(n=Count("id"))
+                .order_by("company__name")
+            )
+            facets["companies"] = [
+                {"slug": row["company__slug"], "name": row["company__name"], "count": row["n"]}
+                for row in companies
+            ]
+        payload["facets"] = facets
+
+    return Response(payload)
 
 
 # ---------------------------------------------------------------------------

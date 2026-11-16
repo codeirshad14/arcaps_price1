@@ -1,0 +1,282 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="{{ theme.bg_start }}">
+  <title>Catalogue — {{ navbar_title }}</title>
+
+  {% comment %}
+    The internal catalogue: the shop's own team browsing every product, with
+    stock, wholesale and GST. Staff only — see kiosk.views.catalog.
+
+    kiosk.css supplies the theme, top bar, buttons and inputs, so this page is
+    unmistakably the same product as the counter screen; catalog.css adds only
+    the catalogue's own layout.
+  {% endcomment %}
+  <link rel="stylesheet" href="{% static 'css/kiosk.css' %}?v={{ asset_version }}">
+  <link rel="stylesheet" href="{% static 'css/catalog.css' %}?v={{ asset_version }}">
+
+  <style>
+    :root {
+      --bg-start: {{ theme.bg_start }};
+      --bg-end: {{ theme.bg_end }};
+      --accent: {{ theme.accent }};
+      --price: {{ theme.price }};
+      --text: {{ theme.text }};
+      --text-dim: {{ theme.text_dim }};
+      --ok: {{ theme.in_stock }};
+      --bad: {{ theme.out_of_stock }};
+      --card-alpha: {{ theme.card_opacity|default:8 }}%;
+      {% if background_url %}
+      --bg-image: url('{{ background_url }}');
+      --bg-overlay: {{ background_overlay }}%;
+      {% endif %}
+    }
+  </style>
+</head>
+
+<body class="is-catalog {% if background_url %}has-bg-image{% endif %}"
+      data-bg-fit="{{ background_fit|default:'cover' }}">
+
+  <div class="bg-layer" aria-hidden="true"></div>
+
+<div class="page">
+
+  <header class="topbar">
+    <div class="topbar-brand">
+      {% if logo_url %}
+        <img class="topbar-logo" src="{{ logo_url }}" alt="{{ navbar_title }}">
+      {% else %}
+        <span class="topbar-monogram" aria-hidden="true">{{ navbar_title|slice:":1"|upper }}</span>
+      {% endif %}
+      <span class="topbar-titles">
+        <span class="topbar-store">{{ navbar_title }}</span>
+        <span class="topbar-meta">
+          <span class="topbar-role">Catalogue</span>
+          <span class="topbar-user">· {{ user.get_username }}</span>
+        </span>
+      </span>
+    </div>
+
+    <div class="corner-controls">
+      {# Back to scanning — the one place this page leads. #}
+      <a id="back-to-scan" class="icon-button" href="{% url 'kiosk:screen' %}"
+         title="Back to the price checker" aria-label="Back to the price checker">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2"/>
+          <path d="M8 8v8M11 8v8M14 8v8M17 8v8"/>
+        </svg>
+      </a>
+    </div>
+  </header>
+
+  <main class="catalog">
+
+    {# ================= Filters (a drawer on phones) ================= #}
+    <aside class="catalog-filters" id="filters" aria-label="Filters">
+      <div class="filters-head">
+        <h2 class="filters-title">Filters</h2>
+        <button type="button" class="filters-clear" id="filters-clear">Clear all</button>
+        <button type="button" class="icon-button filters-close" id="filters-close"
+                aria-label="Close filters">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <section class="filter-group">
+        <h3 class="filter-label">Availability</h3>
+        <div class="segmented" role="radiogroup" aria-label="Availability">
+          <button type="button" class="segment is-on" data-stock="">All</button>
+          <button type="button" class="segment" data-stock="in">In stock</button>
+          <button type="button" class="segment" data-stock="out">Out of stock</button>
+        </div>
+      </section>
+
+      <section class="filter-group">
+        <h3 class="filter-label">Price <span class="filter-hint">incl. GST</span></h3>
+        <div class="price-range">
+          <input type="number" inputmode="decimal" min="0" class="range-input" id="min-price"
+                 placeholder="Min" aria-label="Minimum price">
+          <span class="range-dash" aria-hidden="true">–</span>
+          <input type="number" inputmode="decimal" min="0" class="range-input" id="max-price"
+                 placeholder="Max" aria-label="Maximum price">
+        </div>
+      </section>
+
+      <section class="filter-group">
+        <label class="check-row">
+          <input type="checkbox" id="discount-only">
+          <span>Discounted only</span>
+        </label>
+      </section>
+
+      <section class="filter-group" id="company-group" hidden>
+        <h3 class="filter-label">Company</h3>
+        <div class="facet-list" id="company-list"></div>
+      </section>
+
+      <section class="filter-group filter-group--grow">
+        <h3 class="filter-label">Category</h3>
+        <div class="facet-list" id="category-list"></div>
+      </section>
+    </aside>
+
+    <div class="filters-backdrop" id="filters-backdrop" hidden></div>
+
+    {# ================= Results ================= #}
+    <section class="catalog-results">
+      <div class="catalog-toolbar">
+        <button type="button" class="btn btn--ghost btn--small filters-toggle" id="filters-open">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          Filters <span class="filters-badge" id="filters-badge" hidden></span>
+        </button>
+
+        <form class="catalog-search" id="search-form" role="search" autocomplete="off">
+          <div class="input-wrap">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+            </svg>
+            <input id="search" class="manual-input" type="search" enterkeyhint="search"
+                   placeholder="Search by name or part number"
+                   aria-label="Search by name or part number"
+                   autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            <button type="button" class="search-clear" id="search-clear"
+                    aria-label="Clear search" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                   stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+        </form>
+
+        <label class="sort-wrap">
+          <span class="sort-label">Sort</span>
+          <select id="sort" class="sort-select" aria-label="Sort by">
+            <option value="name">Name A–Z</option>
+            <option value="-name">Name Z–A</option>
+            <option value="price">Price: low to high</option>
+            <option value="-price">Price: high to low</option>
+            <option value="-stock">Stock: most first</option>
+            <option value="stock">Stock: least first</option>
+            <option value="new">Newest first</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="catalog-summary">
+        <span class="catalog-count" id="count" aria-live="polite">Loading…</span>
+        <div class="active-chips" id="active-chips"></div>
+      </div>
+
+      <div class="catalog-scroll" id="scroll">
+        <div class="catalog-grid" id="grid"></div>
+
+        <div class="catalog-empty" id="empty" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+               stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8.5 11h5"/>
+          </svg>
+          <h2>No products match</h2>
+          <p>Try fewer words, or clear a filter.</p>
+          <button type="button" class="btn btn--ghost btn--small" id="empty-clear">Clear all filters</button>
+        </div>
+
+        <div class="catalog-more" id="more">
+          <span class="spinner" aria-hidden="true"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div><!-- /.page -->
+
+{# ================= Product detail ================= #}
+<div class="cat-detail" id="detail" hidden>
+  <div class="cat-detail-card" role="dialog" aria-modal="true" aria-labelledby="detail-name">
+    <button type="button" class="icon-button cat-detail-close" id="detail-close"
+            aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+
+    <div class="cat-detail-media">
+      <img id="detail-image" alt="" hidden>
+      <div class="cat-placeholder" id="detail-placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+          <path d="M21 15l-5-5L5 21"/>
+        </svg>
+        <span>No image</span>
+      </div>
+    </div>
+
+    <div class="cat-detail-body">
+      <div class="cat-chips">
+        <span class="cat-chip cat-chip--code" id="detail-code"></span>
+        <span class="cat-chip" id="detail-company" hidden></span>
+        <span class="cat-chip" id="detail-category" hidden></span>
+      </div>
+      <h2 class="cat-detail-name" id="detail-name"></h2>
+
+      <div class="cat-detail-price">
+        <span class="cat-price" id="detail-price"></span>
+        <span class="cat-mrp" id="detail-mrp" hidden></span>
+        <span class="discount-badge" id="detail-discount" hidden></span>
+      </div>
+
+      <dl class="cat-facts" id="detail-facts"></dl>
+
+      <p class="cat-detail-desc" id="detail-desc" hidden></p>
+    </div>
+  </div>
+</div>
+
+{% comment %}
+  One product card, cloned by catalog.js. Picture on the left, details on
+  the right. Built from a <template> rather than HTML strings so a product
+  name can never inject markup.
+{% endcomment %}
+<template id="card-template">
+  <article class="cat-card" tabindex="0" role="button">
+    <div class="cat-media">
+      <img class="cat-image" alt="" loading="lazy" decoding="async" hidden>
+      <div class="cat-placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+          <path d="M21 15l-5-5L5 21"/>
+        </svg>
+      </div>
+      <span class="cat-stock-dot" aria-hidden="true"></span>
+    </div>
+    <div class="cat-body">
+      <div class="cat-chips">
+        <span class="cat-chip cat-chip--code cat-code"></span>
+        <span class="cat-chip cat-company" hidden></span>
+      </div>
+      <h3 class="cat-name"></h3>
+      <div class="cat-category"></div>
+      <div class="cat-price-row">
+        <span class="cat-price"></span>
+        <span class="cat-mrp" hidden></span>
+        <span class="discount-badge cat-discount" hidden></span>
+      </div>
+      <div class="cat-meta">
+        <span class="cat-wholesale"></span>
+        <span class="cat-stock"></span>
+      </div>
+    </div>
+  </article>
+</template>
+
+<div id="toast" class="toast" hidden></div>
+
+{{ catalog_config|json_script:"catalog-config" }}
+<script src="{% static 'js/catalog.js' %}?v={{ asset_version }}"></script>
+</body>
+</html>

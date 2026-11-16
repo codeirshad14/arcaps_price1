@@ -325,8 +325,15 @@ JAZZMIN_SETTINGS = {
         # stays put in the current one.
         {"name": "View Price Checker Screen", "url": "kiosk:screen", "new_window": True},
         {"name": "Customer QR Poster", "url": "customer:poster", "new_window": True},
+        # The only place the app can be installed from; see kiosk/pwa.py.
+        {"name": "Install App", "url": "install-app"},
         {"name": "API Root", "url": "/api/", "new_window": True},
     ],
+    "custom_links": {
+        "products": [
+            {"name": "Install the app", "url": "install-app", "icon": "fas fa-mobile-alt"},
+        ],
+    },
     "icons": {
         "auth": "fas fa-users-cog",
         "auth.user": "fas fa-user",

@@ -138,7 +138,20 @@ html, body {
   height: 100%;
   margin: 0;
   padding: 0;
+  /* No pull-to-refresh: in the installed app, or on a phone, a downward
+     swipe on the results must scroll them, not reload the whole screen. */
+  overscroll-behavior: none;
 }
+
+/*
+  In full screen the browser styles the page root with its own UA rules
+  rather than leaving the body's colour to fill the canvas, which can show
+  as a bright frame around a MacBook's notch or while macOS animates into
+  the new Space. Pin it to the theme. Two rules,
+  not one list: a browser that does not know one selector drops the lot.
+*/
+html:-webkit-full-screen { background: var(--bg-start); }
+html:fullscreen { background: var(--bg-start); }
 
 body {
   font-family: var(--font);
@@ -475,6 +488,29 @@ body.has-bg-image .bg-layer::before {
 @keyframes view-in {
   from { opacity: 0; transform: translateY(16px) scale(0.99); }
   to   { opacity: 1; transform: none; }
+}
+
+/*
+  Mobile only: every time Show Price is pressed (or a code scanned), the
+  result slides up into the space the console has just given up, so it is
+  obvious where the answer went.
+
+  "Mobile" means a touch screen of phone size — portrait, or a phone turned
+  sideways — never a desktop, however narrow its window. Desktops keep the
+  gentle fade above. The JS adds `is-entering` afresh on every result (see
+  replayEntrance in kiosk.js / customer.js), which is what makes the slide
+  play again for a second search, not only the first.
+*/
+@keyframes view-slide-up {
+  from { opacity: 0; transform: translateY(56px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (pointer: coarse) and (max-width: 900px),
+       (pointer: coarse) and (max-height: 500px) {
+  .detail-view.is-active.is-entering {
+    animation: view-slide-up 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -879,6 +915,21 @@ body.has-bg-image .bg-layer::before {
 
 .icon-button:hover { background: var(--surface-strong); color: var(--text); }
 .icon-button svg { width: 20px; height: 20px; display: block; }
+
+/* A link drawn as an icon button (the catalogue icon, its way back). */
+a.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+/* Full screen is on: the button reads as pressed, so it is clear how to leave. */
+.icon-button.is-active {
+  background: var(--surface-strong);
+  border-color: var(--border-strong);
+  color: var(--accent);
+}
 
 /* Muted speaker reads as "something is switched off", not just another icon. */
 .icon-button.is-muted {
@@ -1474,6 +1525,27 @@ body.has-bg-image .bg-layer::before {
 
 /* ---------- 10b. Login --------------------------------------------------- */
 
+/*
+  The sign-in page has no `.page` shell, and that shell is what the other
+  screens rely on for two things: filling the screen's height, and sitting
+  above the fixed background layer. Without them the card hugged the top of
+  the screen and the station line under it was painted beneath the
+  background, invisible. min-height rather than height, and the page allowed
+  to scroll, so a short laptop screen can still reach the Sign in button.
+*/
+body.is-login { overflow-y: auto; }
+
+body.is-login #app {
+  position: relative;
+  z-index: 1;
+  min-height: 100%;
+}
+
+/* Stretched by #app instead: a percentage height cannot resolve against a
+   parent that only has a min-height, and flexbox will not stretch an item
+   that sets its own height — so `height: 100%` left it top-aligned. */
+body.is-login .login-wrap { height: auto; }
+
 .login-wrap {
   display: flex;
   flex-direction: column;
@@ -1760,14 +1832,23 @@ body.has-bg-image .bg-layer::before {
    screen — side-by-side fields get too cramped to tap accurately. */
 @media (max-width: 560px) {
   /* Keep the logo prominent, drop the secondary line — the bar stays one row. */
-  .topbar { padding: 10px 12px; gap: 10px; }
+  .topbar {
+    padding: 10px 12px;
+    /* Opened from an iPhone Home Screen the page runs under the status bar,
+       and the shorthand above would otherwise drop the base rule's inset. */
+    padding-top: max(10px, env(safe-area-inset-top));
+    gap: 10px;
+  }
   .topbar-meta { display: none; }
   .topbar-store { font-size: 16px; }
   .topbar-logo { height: 46px; max-width: 150px; }
   .topbar-monogram { width: 46px; height: 46px; font-size: 22px; }
 
   /* Phone + result showing: shrink the bar too, every pixel goes to the price. */
-  body.is-showing-result .topbar { padding: 6px 12px; }
+  body.is-showing-result .topbar {
+    padding: 6px 12px;
+    padding-top: max(6px, env(safe-area-inset-top));
+  }
   body.is-showing-result .topbar-logo { height: 34px; max-width: 110px; }
   body.is-showing-result .topbar-monogram { width: 34px; height: 34px; font-size: 17px; }
   body.is-showing-result .topbar-store { font-size: 14px; }

@@ -21,6 +21,7 @@ from typing import Any, Iterable
 from django.core.files.storage import default_storage
 from rest_framework import serializers
 
+from . import images
 from .models import Category, Company, DisplayProfile, Product
 
 # Money is rendered as a fixed-2dp string ("499.00"), matching DRF's default
@@ -33,20 +34,23 @@ def _money(value: Decimal | None) -> str | None:
     return None if value is None else str(value.quantize(_MONEY))
 
 
-def _absolute_media_url(image_field, request) -> str | None:
+def _absolute_media_url(image_field, request, size: int | None = None) -> str | None:
     """Absolute URL for an uploaded file, or ``None``.
 
     Returns ``None`` both when nothing was uploaded and when the row points at
     a file no longer on disk — a real situation after copying a database
     between machines. Either way the frontend draws its placeholder instead of
     a broken image.
+
+    With ``size``, the URL is of a copy no larger than that — see
+    products/images.py for why the screens must never get the raw upload.
     """
     if not image_field:
         return None
     try:
         if not default_storage.exists(image_field.name):
             return None
-        url = image_field.url
+        url = images.resized_url(image_field, size) if size else image_field.url
     except (ValueError, OSError, NotImplementedError):
         return None
     # build_absolute_uri is what makes the URL usable from a tablet on the LAN
@@ -149,7 +153,41 @@ class TallyProductSerializer(DynamicFieldsMixin, serializers.ModelSerializer):
         ]
 
     def get_image(self, obj: Product) -> str | None:
-        return _absolute_media_url(obj.image, self.context.get("request"))
+        return _absolute_media_url(obj.image, self.context.get("request"), images.PRODUCT)
+
+
+class CatalogProductSerializer(TallyProductSerializer):
+    """A product as the internal catalogue shows it.
+
+    The kiosk payload plus what only staff need: stock, GST, HSN, category,
+    alias. Every field is always sent — the station's "show this on screen"
+    switches are about what customers see, and this screen is not theirs.
+
+    ``image`` is a card-sized copy for the list; ``image_large`` the bigger
+    one the detail view opens, fetched only when somebody opens it.
+    """
+
+    image_large = serializers.SerializerMethodField()
+    category = serializers.SerializerMethodField()
+
+    class Meta(TallyProductSerializer.Meta):
+        fields = TallyProductSerializer.Meta.fields + [
+            "id",
+            "image_large",
+            "alias",
+            "category",
+            "gst",
+            "hsn",
+        ]
+
+    def get_image(self, obj: Product) -> str | None:
+        return _absolute_media_url(obj.image, self.context.get("request"), images.CARD)
+
+    def get_image_large(self, obj: Product) -> str | None:
+        return _absolute_media_url(obj.image, self.context.get("request"), images.PRODUCT)
+
+    def get_category(self, obj: Product) -> str | None:
+        return obj.category.name if obj.category_id else None
 
 
 class ProductListSerializer(serializers.ModelSerializer):
@@ -420,7 +458,7 @@ class DisplayProfileSerializer(serializers.ModelSerializer):
         }
 
     def get_logo(self, obj: DisplayProfile) -> str | None:
-        return _absolute_media_url(obj.logo, self.context.get("request"))
+        return _absolute_media_url(obj.logo, self.context.get("request"), images.LOGO)
 
     def get_background(self, obj: DisplayProfile) -> dict[str, Any]:
         """Background image, how to fit it, and its darkening overlay.
@@ -429,7 +467,9 @@ class DisplayProfileSerializer(serializers.ModelSerializer):
         so the screen always has a deliberate backdrop.
         """
         return {
-            "image": _absolute_media_url(obj.background_image, self.context.get("request")),
+            "image": _absolute_media_url(
+                obj.background_image, self.context.get("request"), images.BACKGROUND
+            ),
             "fit": obj.background_fit,
             "overlay": obj.background_overlay,
         }

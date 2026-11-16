@@ -12,7 +12,12 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from kiosk import pwa
+
 urlpatterns = [
+    # Ahead of admin.site.urls, whose catch-all would otherwise claim it.
+    # admin_view is what makes it staff-only: anyone else is sent to sign in.
+    path("admin/install-app/", admin.site.admin_view(pwa.install_app), name="install-app"),
     path("admin/", admin.site.urls),
     path("api/", include("api.urls")),
     path("customer/", include("customer_portal.urls")),

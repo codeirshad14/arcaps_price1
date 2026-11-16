@@ -9,6 +9,7 @@ app_name = "api"
 urlpatterns = [
     path("", views.api_root, name="root"),
     path("lookup/", views.lookup, name="lookup"),
+    path("catalog/", views.catalog, name="catalog"),
     path("tally-product/", views.TallyProductSyncView.as_view(), name="tally-sync"),
     path("settings/", views.display_settings, name="settings"),
     path("stations/", views.stations, name="stations"),

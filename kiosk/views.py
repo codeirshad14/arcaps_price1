@@ -11,12 +11,13 @@ from functools import lru_cache
 
 from django import forms
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.views import LoginView
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 
-from products.models import DisplayProfile, ScreenHeaderSettings
+from products.models import DisplayProfile, ScreenHeaderSettings, resolve_company
 from products.serializers import build_display_block
 
 # A year, in seconds — how long a "remembered" showroom PC stays signed in.
@@ -30,8 +31,12 @@ _VERSIONED_ASSETS = (
     "static/js/kiosk.js",
     "static/js/price-fit.js",
     "static/js/price-speech.js",
+    "static/js/fullscreen.js",
+    "static/js/scan-input.js",
     "static/css/customer.css",
     "static/js/customer.js",
+    "static/css/catalog.css",
+    "static/js/catalog.js",
 )
 
 
@@ -180,5 +185,50 @@ def screen(request: HttpRequest) -> HttpResponse:
     # The page itself must never be cached: it carries the station's branding
     # and the version stamps for the stylesheet and script. A stale copy would
     # keep pointing at old assets no matter how they are versioned.
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@login_required
+def catalog(request: HttpRequest) -> HttpResponse:
+    """The internal catalogue: browse, search and filter every product.
+
+    For the shop's own team, reached from the icon in the counter screen's
+    top bar. Always behind a login — whatever KIOSK_REQUIRE_LOGIN says about
+    the counter screen — because it shows stock, wholesale rates and GST that
+    are not for customers. Customers never have an account, so a QR visit
+    cannot reach it.
+
+    Same station, same theme, same top bar as the counter screen; the
+    products themselves come from /api/catalog/, which scopes them to the
+    login's company exactly as a lookup is scoped.
+    """
+    profile = DisplayProfile.resolve(request.GET.get("station"))
+    initial_display = build_display_block(request, profile)
+    background = initial_display.get("background") or {}
+    header = ScreenHeaderSettings.get_solo()
+    company = resolve_company(request.user, profile)
+
+    response = render(
+        request,
+        "kiosk/catalog.html",
+        {
+            "display": profile,
+            "logo_url": initial_display.get("logo"),
+            "navbar_title": header.name_for(profile),
+            "background_url": background.get("image"),
+            "background_fit": background.get("fit"),
+            "background_overlay": background.get("overlay"),
+            "theme": initial_display.get("theme") or {},
+            "catalog_config": {
+                "station": profile.slug,
+                "currency": profile.currency_symbol,
+                # The company filter only means something on a screen that
+                # shows every company.
+                "all_companies": company is None,
+            },
+            "asset_version": asset_version(),
+        },
+    )
     response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
